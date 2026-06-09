@@ -177,6 +177,53 @@ async fn coverage_destructive_quit_close() {
     ok(json!({"action":"quit_app","app":"TextEdit"})).await;
 }
 
+/// Issue #348: a background `set_value` on a *visible* TextEdit window should
+/// (a) succeed, (b) append the truthful observability notice to the output, and
+/// (c) not move the cursor. We can't assert pixels, but we assert the notice and
+/// that the action still completes (the highlight is fire-and-forget).
+#[tokio::test]
+#[ignore = "live"]
+async fn coverage_observability_signal_visible() {
+    textedit_new().await;
+    // Bring TextEdit forward so its window is unquestionably visible/topmost.
+    ok(json!({"action":"activate_app","app":"TextEdit"})).await;
+    let el = json!({"app":"TextEdit","path":[1,1]});
+    let out = ok(json!({"action":"set_value","element":el,"value":"observe-348"})).await;
+    assert!(
+        out.output.contains("observability:"),
+        "expected an observability notice, got: {}",
+        out.output
+    );
+    // The value still took effect (signal must not break the action).
+    let g = ok(json!({"action":"get_value","element":el})).await;
+    assert!(
+        g.output.contains("observe-348"),
+        "get_value got: {}",
+        g.output
+    );
+    textedit_quit().await;
+}
+
+/// With the signal disabled via env, no notice is appended and the action still
+/// works. Guards the opt-out path.
+#[tokio::test]
+#[ignore = "live"]
+async fn coverage_observability_signal_disabled() {
+    // SAFETY: single-threaded ignored live test; we set + unset around the call.
+    unsafe { std::env::set_var("JCODE_COMPUTER_HIGHLIGHT", "0") };
+    textedit_new().await;
+    ok(json!({"action":"activate_app","app":"TextEdit"})).await;
+    let el = json!({"app":"TextEdit","path":[1,1]});
+    let out = ok(json!({"action":"set_value","element":el,"value":"observe-off"})).await;
+    assert!(
+        !out.output.contains("observability:"),
+        "expected NO notice when disabled, got: {}",
+        out.output
+    );
+    textedit_quit().await;
+    unsafe { std::env::remove_var("JCODE_COMPUTER_HIGHLIGHT") };
+}
+
 /// Parse the first CG window id whose owner matches `owner` from list_windows
 /// output lines of the form: "<id>\t<owner>\t<title>\t<bounds>".
 fn first_window_id_for(text: &str, owner: &str) -> Option<i64> {
