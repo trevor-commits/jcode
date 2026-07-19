@@ -2,63 +2,22 @@ import JCodeKit
 import SwiftUI
 
 /// Friendly placeholder for a fresh session, centered in the canvas.
-///
-/// Beyond the affordance text, it offers one-tap starter prompts so the first
-/// interaction costs a single tap instead of composing from scratch.
 struct EmptyTranscript: View {
-    var onSuggestion: ((String) -> Void)? = nil
-
-    private static let suggestions = [
-        "What's the state of this repo?",
-        "Run the tests",
-        "Summarize recent changes",
-    ]
-
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 16) {
             Image(systemName: "terminal")
-                .font(Theme.icon(30, weight: .regular))
-                .foregroundStyle(Theme.mint)
-                .frame(width: 72, height: 72)
-                .background(Theme.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Theme.border, lineWidth: 1)
-                )
-                .accessibilityHidden(true)
+                .font(Theme.icon(40, weight: .light))
+                .foregroundStyle(Theme.textSecondary)
             Text("Ready when you are")
-                .font(Theme.mono(17, weight: .semibold))
+                .font(Theme.mono(16, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
             Text("Send a message to start driving this session.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
-            if let onSuggestion {
-                VStack(spacing: 8) {
-                    ForEach(Self.suggestions, id: \.self) { suggestion in
-                        Button {
-                            onSuggestion(suggestion)
-                        } label: {
-                            Text(suggestion)
-                                .font(.subheadline)
-                                .foregroundStyle(Theme.textPrimary)
-                                .padding(.horizontal, 16)
-                                .frame(minHeight: 44)
-                                .background(Theme.surface)
-                                .clipShape(Capsule())
-                                .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityHint("Fills the composer with this prompt")
-                    }
-                }
-                .padding(.top, 8)
-            }
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -70,36 +29,26 @@ struct EntryView: View {
         switch entry.role {
         case .user:
             HStack {
-                Spacer(minLength: 40)
-                VStack(alignment: .trailing, spacing: 5) {
+                Spacer(minLength: 48)
+                VStack(alignment: .trailing, spacing: 4) {
                     Text(entry.text)
                         .font(.body)
                         .foregroundStyle(Theme.textPrimary)
-                        .multilineTextAlignment(.leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(Theme.userBubble)
-                        .clipShape(
-                            RoundedRectangle(cornerRadius: Theme.Radius.bubble, style: .continuous)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.Radius.bubble, style: .continuous)
-                                .stroke(Theme.mint.opacity(0.22), lineWidth: 1)
-                        )
-                        .textSelection(.enabled)
+                        .padding(12)
+                        .background(Theme.mintTint)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
                         .copyContextMenu(entry.text)
                     if entry.isQueued {
                         Label("queued", systemImage: "clock")
-                            .font(Theme.mono(10.5))
+                            .font(Theme.mono(11))
                             .foregroundStyle(Theme.textTertiary)
-                            .padding(.trailing, 4)
                             .accessibilityLabel("Queued")
                             .accessibilityHint("Delivers after the current response")
                     }
                 }
             }
         case .assistant:
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 if !entry.reasoning.isEmpty {
                     ReasoningDisclosure(text: entry.reasoning)
                 }
@@ -111,16 +60,10 @@ struct EntryView: View {
                         .copyContextMenu(entry.text)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         case .system:
             Text(entry.text)
-                .font(Theme.mono(11))
+                .font(.footnote)
                 .foregroundStyle(Theme.textTertiary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Theme.surface.opacity(0.6))
-                .clipShape(Capsule())
                 .frame(maxWidth: .infinity, alignment: .center)
                 .copyContextMenu(entry.text)
         }
@@ -158,7 +101,7 @@ struct ReasoningDisclosure: View {
                 Image(systemName: "brain")
                     .font(.caption2)
                     .foregroundStyle(Theme.textTertiary)
-                    .padding(.top, 4)
+                    .padding(.top, 2)
                     .accessibilityHidden(true)
                 Text(expanded ? text : firstLine)
                     .font(Theme.mono(12))

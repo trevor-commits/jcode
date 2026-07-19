@@ -77,7 +77,6 @@ MOBILE_ACTIONS: tuple[str, ...] = (
     "rename_session",
     "new_session",
     "remove_server",
-    "tap_suggestion",
 )
 
 # Mobile actions that leave NO trace in TUI logs and must be imputed from
@@ -98,7 +97,6 @@ IMPUTED_WEIGHTS: dict[str, float] = {
     "rename_session": 0.01,
     "new_session": 0.01,
     "remove_server": 0.002,
-    "tap_suggestion": 0.02,
 }
 
 # Observed (mineable) mobile actions, distributed over the remaining mass
@@ -133,7 +131,6 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "rename_session": 0.01,
     "new_session": 0.01,
     "remove_server": 0.002,
-    "tap_suggestion": 0.02,
 }
 
 # TUI-only verbs we explicitly acknowledge and drop (no mobile analogue).
