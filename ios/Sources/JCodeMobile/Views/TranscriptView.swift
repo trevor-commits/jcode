@@ -11,7 +11,6 @@ import SwiftUI
 struct TranscriptView: View {
     let entries: [TranscriptEntry]
     let isReasoning: Bool
-    var onSuggestion: ((String) -> Void)? = nil
 
     /// True while the viewport is at (or near) the bottom of the content.
     @State private var isPinnedToBottom = true
@@ -21,7 +20,7 @@ struct TranscriptView: View {
 
     var body: some View {
         if entries.isEmpty && !isReasoning {
-            EmptyTranscript(onSuggestion: onSuggestion)
+            EmptyTranscript()
         } else {
             GeometryReader { viewport in
                 scroller(viewportHeight: viewport.size.height)
@@ -32,9 +31,10 @@ struct TranscriptView: View {
     private func scroller(viewportHeight: CGFloat) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // Content reads top-down like a document; autoscroll keeps
-                // the latest entry visible once content overflows.
+                // A flexible top spacer pushes short content to the bottom of
+                // the viewport; it collapses to zero once content overflows.
                 LazyVStack(alignment: .leading, spacing: 16) {
+                    Spacer(minLength: 0)
                     ForEach(entries) { entry in
                         EntryView(entry: entry)
                             .id(entry.id)
@@ -44,7 +44,7 @@ struct TranscriptView: View {
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(minHeight: max(0, viewportHeight - 16), alignment: .bottom)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
                 .background(
@@ -96,18 +96,11 @@ struct TranscriptView: View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-                .tint(Theme.mint)
+                .tint(Theme.textTertiary)
             Text("thinking")
                 .font(Theme.mono(12))
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(Theme.textTertiary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Theme.surface)
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Thinking")
     }
 }
 
@@ -127,19 +120,15 @@ private struct ScrollToBottomButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "arrow.down")
-                .font(.subheadline.weight(.bold))
+                .font(.body.weight(.semibold))
                 .foregroundStyle(Theme.textPrimary)
-                .frame(width: 38, height: 38)
+                .frame(width: 44, height: 44)
                 .background(Theme.surfaceElevated)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(Theme.borderStrong, lineWidth: 1))
-                .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
-                .frame(width: 44, height: 44)
-                .contentShape(Circle())
+                .overlay(Circle().stroke(Theme.border, lineWidth: 1))
         }
-        .buttonStyle(PressableButtonStyle())
         .accessibilityLabel("Scroll to bottom")
         .accessibilityHint("Jumps to the latest message")
-        .transition(.scale(scale: 0.8).combined(with: .opacity))
+        .transition(.opacity)
     }
 }
