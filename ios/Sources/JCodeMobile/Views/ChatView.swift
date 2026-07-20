@@ -90,51 +90,42 @@ struct ChatView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 12) {
+            // Single-line header: title + model on one baseline keeps chrome
+            // lean so the transcript gets the vertical space.
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(model.session.sessionTitle ?? model.activeServer?.serverName ?? "jcode")
-                    .font(Theme.mono(15, weight: .semibold))
+                    .font(Theme.mono(16, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .layoutPriority(1)
                 if let modelName = model.session.modelName {
                     Text(shortModelName(modelName))
-                        .font(Theme.mono(10.5))
+                        .font(Theme.mono(11))
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.head)
                 }
             }
-            Spacer(minLength: 8)
+            Spacer()
             StatusPill(phase: model.session.phase)
             Button {
                 showSettings = true
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.subheadline.weight(.bold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 36, height: 36)
-                    .background(Theme.surface)
+                    .frame(width: 44, height: 44)
+                    .background(Theme.surfaceElevated)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(Theme.border, lineWidth: 1))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Circle())
             }
-            .buttonStyle(PressableButtonStyle())
             .accessibilityLabel("Settings")
             .accessibilityHint("Sessions, model, and servers")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
         .padding(.top, edgePads.top)
-        .background(alignment: .bottom) {
-            ZStack(alignment: .bottom) {
-                Theme.background
-                Theme.chrome
-                Hairline()
-            }
-            .ignoresSafeArea(edges: .top)
-        }
     }
 
     /// Strips the auth-route prefix ("claude-api:claude-fable-5" -> "claude-fable-5")
