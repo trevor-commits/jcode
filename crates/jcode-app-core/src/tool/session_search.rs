@@ -1,17 +1,17 @@
 //! Cross-session search tool - RAG across all past sessions
-//!
 //! The tool is optimized for agent recall rather than raw grep output:
 //! - current session, system reminders, and tool-only messages are hidden by default
 //! - session metadata is searchable and returned as first-class results
 //! - snapshot + journal persistence is searched so recent messages are visible
 //! - results are grouped by session by default to avoid duplicate floods
 
+use super::session_search_gate::acquire_session_search_permit;
 use super::session_search_index::{self, IndexFileSpec};
 use super::{Tool, ToolContext, ToolOutput};
 use crate::message::ContentBlock;
 use crate::session::{Session, StoredMessage, session_journal_path_from_snapshot};
 use crate::storage;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use jcode_import_core::{
@@ -38,12 +38,10 @@ use serde_json::{Value, json};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
 use std::time::SystemTime;
 
 /// Max session snapshots/journals to deserialize after raw pre-filtering.
 const MAX_DESERIALIZE: usize = 500;
-
 /// Number of parallel threads for file scanning/loading.
 const SCAN_THREADS: usize = 8;
 
@@ -57,17 +55,6 @@ const MAX_CONTEXT_MESSAGES: usize = 5;
 const INDEX_SCORE_CANDIDATE_MULTIPLIER: usize = 2;
 /// Legacy JSON index file superseded by the binary token-hash indexes.
 const LEGACY_INDEX_FILE_NAME: &str = "session_search_recent_index_v1.json";
-
-static SESSION_SEARCH_GATE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
-
-async fn acquire_session_search_permit() -> Result<tokio::sync::OwnedSemaphorePermit> {
-    SESSION_SEARCH_GATE
-        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| anyhow!("session_search concurrency gate closed"))
-}
 
 #[derive(Debug, Deserialize)]
 struct SearchInput {

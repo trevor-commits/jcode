@@ -25,6 +25,7 @@ mod read;
 pub mod selfdev;
 pub(crate) mod serde_coerce;
 mod session_search;
+mod session_search_gate;
 pub(crate) mod session_search_index;
 mod side_panel;
 mod skill;
