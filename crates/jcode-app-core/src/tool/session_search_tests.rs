@@ -56,6 +56,29 @@ fn run_search(home: &Path, query: &str, options: &SearchOptions) -> Vec<SearchRe
     run_report(home, query, options).results
 }
 
+#[tokio::test]
+async fn session_search_permit_serializes_expensive_searches() {
+    let first = acquire_session_search_permit()
+        .await
+        .expect("first search permit");
+    let mut second = tokio::spawn(acquire_session_search_permit());
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut second)
+            .await
+            .is_err(),
+        "second search should wait while the first permit is held"
+    );
+
+    drop(first);
+    let second = tokio::time::timeout(std::time::Duration::from_secs(1), second)
+        .await
+        .expect("second search should be released")
+        .expect("second search task")
+        .expect("second search permit");
+    drop(second);
+}
+
 #[test]
 fn token_overlap_matches_when_exact_phrase_is_absent() {
     with_temp_home(|home| {

@@ -11,7 +11,7 @@ use super::{Tool, ToolContext, ToolOutput};
 use crate::message::ContentBlock;
 use crate::session::{Session, StoredMessage, session_journal_path_from_snapshot};
 use crate::storage;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use jcode_import_core::{
@@ -38,6 +38,7 @@ use serde_json::{Value, json};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::SystemTime;
 
 /// Max session snapshots/journals to deserialize after raw pre-filtering.
@@ -56,6 +57,17 @@ const MAX_CONTEXT_MESSAGES: usize = 5;
 const INDEX_SCORE_CANDIDATE_MULTIPLIER: usize = 2;
 /// Legacy JSON index file superseded by the binary token-hash indexes.
 const LEGACY_INDEX_FILE_NAME: &str = "session_search_recent_index_v1.json";
+
+static SESSION_SEARCH_GATE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+
+async fn acquire_session_search_permit() -> Result<tokio::sync::OwnedSemaphorePermit> {
+    SESSION_SEARCH_GATE
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| anyhow!("session_search concurrency gate closed"))
+}
 
 #[derive(Debug, Deserialize)]
 struct SearchInput {
@@ -512,6 +524,7 @@ impl Tool for SessionSearchTool {
             exhaustive,
         };
 
+        let _search_permit = acquire_session_search_permit().await?;
         let report = tokio::task::spawn_blocking({
             let session_id = ctx.session_id.clone();
             let query = query.clone();
