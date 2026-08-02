@@ -46,6 +46,19 @@ const BLOOM_BITS_PER_TOKEN: usize = 8;
 const BLOOM_HASHES: u32 = 4;
 
 static INDEX_CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<TokenHashIndex>>>> = OnceLock::new();
+static INDEX_BUILD_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+
+fn index_build_lock(index_path: &Path) -> Result<Arc<Mutex<()>>> {
+    let locks = INDEX_BUILD_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = locks
+        .lock()
+        .map_err(|_| anyhow::anyhow!("session_search index build lock map poisoned"))?;
+    Ok(Arc::clone(
+        guard
+            .entry(index_path.to_path_buf())
+            .or_insert_with(|| Arc::new(Mutex::new(()))),
+    ))
+}
 
 /// Snapshot of the resident index cache for memory attribution:
 /// `(index_count, entry_count, approx_resident_bytes)`.
@@ -370,6 +383,11 @@ pub fn build_or_update(
     specs: &[IndexFileSpec],
     read_text: &(dyn Fn(usize) -> Option<String> + Sync),
 ) -> Result<Arc<TokenHashIndex>> {
+    let build_lock = index_build_lock(index_path)?;
+    let _build_guard = build_lock
+        .lock()
+        .map_err(|_| anyhow::anyhow!("session_search index build lock poisoned"))?;
+
     let cache = INDEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(guard) = cache.lock()
         && let Some(index) = guard.get(index_path)
@@ -563,6 +581,47 @@ mod tests {
             loaded.candidate_slots(&["needle".to_string()], 1),
             vec![0, 1]
         );
+    }
+
+    #[test]
+    fn concurrent_builds_share_one_rebuild() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+        use std::time::Duration;
+
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let index_path = temp.path().join("index.bin");
+        let specs = vec![spec("shared", 1, 16)];
+        let reads = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(Barrier::new(2));
+
+        let (first, second) = std::thread::scope(|scope| {
+            let spawn_build = || {
+                let reads = Arc::clone(&reads);
+                let start = Arc::clone(&start);
+                let index_path = index_path.clone();
+                let specs = specs.clone();
+                scope.spawn(move || {
+                    start.wait();
+                    build_or_update(&index_path, &specs, &|_| {
+                        reads.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(50));
+                        Some("shared transcript".to_string())
+                    })
+                    .expect("build index")
+                })
+            };
+
+            let first = spawn_build();
+            let second = spawn_build();
+            (
+                first.join().expect("first build"),
+                second.join().expect("second build"),
+            )
+        });
+
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert!(Arc::ptr_eq(&first, &second));
     }
 
     #[test]
