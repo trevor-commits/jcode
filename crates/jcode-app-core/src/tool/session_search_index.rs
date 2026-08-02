@@ -19,6 +19,7 @@
 
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -58,6 +59,18 @@ fn index_build_lock(index_path: &Path) -> Result<Arc<Mutex<()>>> {
             .entry(index_path.to_path_buf())
             .or_insert_with(|| Arc::new(Mutex::new(()))),
     ))
+}
+
+fn create_index_temp_file(path: &Path) -> Result<tempfile::NamedTempFile> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    tempfile::Builder::new()
+        .prefix(".session-search-index-")
+        .tempfile_in(parent)
+        .with_context(|| format!("create temporary index beside {}", path.display()))
 }
 
 /// Snapshot of the resident index cache for memory attribution:
@@ -256,9 +269,6 @@ impl TokenHashIndex {
     }
 
     fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let mut buf = Vec::with_capacity(64 + self.entries.len() * 48);
         buf.extend_from_slice(MAGIC);
         buf.extend_from_slice(&VERSION.to_le_bytes());
@@ -278,9 +288,11 @@ impl TokenHashIndex {
                 buf.extend_from_slice(&word.to_le_bytes());
             }
         }
-        let tmp = path.with_extension("bin.tmp");
-        std::fs::write(&tmp, &buf)?;
-        std::fs::rename(&tmp, path)?;
+        let mut tmp = create_index_temp_file(path)?;
+        tmp.write_all(&buf)?;
+        tmp.persist(path)
+            .map_err(|err| err.error)
+            .with_context(|| format!("persist session_search index to {}", path.display()))?;
         Ok(())
     }
 
@@ -622,6 +634,19 @@ mod tests {
 
         assert_eq!(reads.load(Ordering::SeqCst), 1);
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn index_writes_use_unique_same_directory_temp_files() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let index_path = temp.path().join("index.bin");
+
+        let first = create_index_temp_file(&index_path).expect("first temp file");
+        let second = create_index_temp_file(&index_path).expect("second temp file");
+
+        assert_ne!(first.path(), second.path());
+        assert_eq!(first.path().parent(), index_path.parent());
+        assert_eq!(second.path().parent(), index_path.parent());
     }
 
     #[test]
