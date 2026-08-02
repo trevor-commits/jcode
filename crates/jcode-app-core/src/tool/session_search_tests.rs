@@ -268,6 +268,107 @@ fn bench_real_session_search_corpus() {
 }
 
 #[test]
+#[ignore = "local concurrent memory benchmark over the real external session corpus"]
+fn bench_real_concurrent_session_search_memory() {
+    if std::env::var("JCODE_SESSION_SEARCH_BENCH_REAL")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        eprintln!("set JCODE_SESSION_SEARCH_BENCH_REAL=1 to run against the real session corpus");
+        return;
+    }
+
+    with_temp_home(|home| {
+        let real_codex_sessions = dirs::home_dir()
+            .expect("real home directory")
+            .join(".codex/sessions");
+        let sandbox_codex = home.join("external/.codex");
+        std::fs::create_dir_all(&sandbox_codex).expect("create sandbox external directory");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_codex_sessions, sandbox_codex.join("sessions"))
+            .expect("link real Codex sessions read-only into benchmark sandbox");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&real_codex_sessions, sandbox_codex.join("sessions"))
+            .expect("link real Codex sessions read-only into benchmark sandbox");
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("benchmark runtime");
+        runtime.block_on(async {
+            let tool = SessionSearchTool::new();
+            let context = ToolContext {
+                session_id: "memory-benchmark-session".to_string(),
+                message_id: "memory-benchmark-message".to_string(),
+                tool_call_id: "memory-benchmark-call".to_string(),
+                working_dir: None,
+                stdin_request_tx: None,
+                graceful_shutdown_signal: None,
+                execution_mode: jcode_tool_core::ToolExecutionMode::Direct,
+            };
+            let input = |suffix: &str| {
+                json!({
+                    "query": format!("jcode-memory-benchmark-never-match-{suffix}"),
+                    "source": "codex",
+                    "include_external": true,
+                    "max_scan_sessions": 10_000
+                })
+            };
+
+            let before = crate::process_memory::snapshot_with_source("session_search_bench_before");
+            let start = Instant::now();
+            let (first, second, third) = tokio::join!(
+                tool.execute(input("alpha"), context.for_subcall("bench-1".to_string())),
+                tool.execute(input("beta"), context.for_subcall("bench-2".to_string())),
+                tool.execute(input("gamma"), context.for_subcall("bench-3".to_string())),
+            );
+            first.expect("first search");
+            second.expect("second search");
+            third.expect("third search");
+            let elapsed = start.elapsed();
+            let after = crate::process_memory::snapshot_with_source("session_search_bench_after");
+            let before_footprint = before
+                .os
+                .as_ref()
+                .and_then(|os| os.physical_footprint_bytes)
+                .expect("before physical footprint");
+            let peak_footprint = after
+                .os
+                .as_ref()
+                .and_then(|os| os.peak_physical_footprint_bytes)
+                .expect("peak physical footprint");
+            let growth = peak_footprint.saturating_sub(before_footprint);
+
+            eprintln!(
+                "BENCH_CONCURRENT elapsed_ms={} before_mib={} peak_mib={} growth_mib={}",
+                elapsed.as_millis(),
+                before_footprint / (1024 * 1024),
+                peak_footprint / (1024 * 1024),
+                growth / (1024 * 1024),
+            );
+            assert!(
+                peak_footprint < 3 * 1024 * 1024 * 1024,
+                "three concurrent searches exceeded 3 GiB: {peak_footprint} bytes"
+            );
+
+            let index_dir = index_dir().expect("index dir");
+            let leftovers = std::fs::read_dir(index_dir)
+                .expect("read index dir")
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".session-search-index-")
+                })
+                .count();
+            assert_eq!(leftovers, 0, "temporary index files should be cleaned up");
+        });
+    });
+}
+
+#[test]
 fn stop_word_only_query_is_not_actionable() {
     with_temp_home(|home| {
         save_test_session(
