@@ -2635,7 +2635,7 @@ pub(super) fn build_todo_confidence_summary_message(todos: &[crate::todo::TodoIt
     if summary.confidence_spike_detected && !summary.completion_confidence_needs_validation {
         crate::todo::build_todo_confidence_spike_continuation_message(todos)
     } else {
-        crate::todo::build_todo_completion_continuation_message(todos)
+        crate::todo::build_todo_completion_continuation_message(todos, TODO_CONFIDENCE_THRESHOLD)
     }
 }
 
