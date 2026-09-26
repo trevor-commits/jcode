@@ -235,21 +235,124 @@ fn openai_compatible_keyword(key: &str, value: &Value) -> Value {
 /// An "empty" schema like `{"description": "..."}` accepts any instance in JSON
 /// Schema, but OpenAI's strict subset requires a concrete type keyword.
 fn schema_has_type_info(schema: &Value) -> bool {
+    fn all_children_typed(children: &serde_json::Map<String, Value>) -> bool {
+        !children.is_empty() && children.values().all(schema_has_type_info)
+    }
+
+    fn all_branches_typed(branches: &Value) -> bool {
+        branches
+            .as_array()
+            .map(|items| !items.is_empty() && items.iter().all(schema_has_type_info))
+            .unwrap_or(false)
+    }
+
+    fn nested_composition_typed(map: &serde_json::Map<String, Value>) -> bool {
+        if let Some(props) = map.get("properties").and_then(Value::as_object)
+            && !all_children_typed(props)
+        {
+            return false;
+        }
+        if let Some(props) = map.get("patternProperties").and_then(Value::as_object)
+            && !all_children_typed(props)
+        {
+            return false;
+        }
+        if let Some(branches) = map.get("anyOf")
+            && !all_branches_typed(branches)
+        {
+            return false;
+        }
+        if let Some(branches) = map.get("oneOf")
+            && !all_branches_typed(branches)
+        {
+            return false;
+        }
+        if let Some(branches) = map.get("allOf")
+            && !all_branches_typed(branches)
+        {
+            return false;
+        }
+        if let Some(items) = map.get("items") {
+            let items_typed = match items {
+                Value::Array(_) => all_branches_typed(items),
+                other => schema_has_type_info(other),
+            };
+            if !items_typed {
+                return false;
+            }
+        }
+        if let Some(prefix_items) = map.get("prefixItems")
+            && !all_branches_typed(prefix_items)
+        {
+            return false;
+        }
+
+        true
+    }
+
+    fn has_composition_keywords(map: &serde_json::Map<String, Value>) -> bool {
+        map.contains_key("anyOf")
+            || map.contains_key("oneOf")
+            || map.contains_key("allOf")
+            || map.contains_key("properties")
+            || map.contains_key("patternProperties")
+            || map.contains_key("items")
+            || map.contains_key("prefixItems")
+    }
+
     match schema {
         Value::Bool(_) => false,
-        Value::Object(map) => [
-            "type",
-            "enum",
-            "const",
-            "$ref",
-            "anyOf",
-            "oneOf",
-            "allOf",
-            "properties",
-            "items",
-        ]
-        .iter()
-        .any(|key| map.contains_key(*key)),
+        Value::Object(map) => {
+            let has_direct_type = map.contains_key("type")
+                || map.contains_key("enum")
+                || map.contains_key("const")
+                || map.contains_key("$ref");
+
+            if has_composition_keywords(map) && !nested_composition_typed(map) {
+                return false;
+            }
+
+            if has_direct_type {
+                return true;
+            }
+
+            if let Some(props) = map.get("properties").and_then(Value::as_object)
+                && all_children_typed(props)
+            {
+                return true;
+            }
+            if let Some(props) = map.get("patternProperties").and_then(Value::as_object)
+                && all_children_typed(props)
+            {
+                return true;
+            }
+            if let Some(branches) = map.get("anyOf")
+                && all_branches_typed(branches)
+            {
+                return true;
+            }
+            if let Some(branches) = map.get("oneOf")
+                && all_branches_typed(branches)
+            {
+                return true;
+            }
+            if let Some(branches) = map.get("allOf")
+                && all_branches_typed(branches)
+            {
+                return true;
+            }
+            if let Some(prefix_items) = map.get("prefixItems")
+                && all_branches_typed(prefix_items)
+            {
+                return true;
+            }
+
+            match map.get("items") {
+                Some(items) if items.is_array() => all_branches_typed(items),
+                Some(other) => schema_has_type_info(other),
+                None => false,
+            }
+        }
         _ => true,
     }
 }
@@ -285,6 +388,21 @@ pub fn schema_supports_strict(schema: &Value) -> bool {
         // catalog. Fall back to non-strict instead. See issue #713.
         if let Some(Value::Object(props)) = map.get("properties")
             && props.values().any(|prop| !schema_has_type_info(prop))
+        {
+            return false;
+        }
+        if let Some(Value::Object(defs)) = map.get("$defs")
+            && defs.values().any(|def| !schema_has_type_info(def))
+        {
+            return false;
+        }
+        if let Some(Value::Object(defs)) = map.get("definitions")
+            && defs.values().any(|def| !schema_has_type_info(def))
+        {
+            return false;
+        }
+        if (map.contains_key("items") || map.contains_key("prefixItems"))
+            && !schema_has_type_info(&Value::Object(map.clone()))
         {
             return false;
         }
@@ -623,6 +741,84 @@ mod tests {
         assert!(schema_supports_strict(&json!({
             "type": "object",
             "properties": { "x": { "type": "string" } },
+            "additionalProperties": false
+        })));
+    }
+
+    /// Regression test for issue #14: container keywords alone must not count as
+    /// typed when their nested schemas lack concrete type information.
+    #[test]
+    fn schema_supports_strict_rejects_nested_untyped_composition() {
+        assert!(!schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "tags": { "items": { "description": "tag value" } }
+            },
+            "additionalProperties": false
+        })));
+        assert!(!schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "value": { "anyOf": [{ "description": "depends on key" }] }
+            },
+            "additionalProperties": false
+        })));
+        assert!(!schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "payload": { "$ref": "#/$defs/Untyped" }
+            },
+            "$defs": {
+                "Untyped": { "description": "opaque payload" }
+            },
+            "additionalProperties": false
+        })));
+        assert!(!schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": { "description": "row payload" }
+                }
+            },
+            "additionalProperties": false
+        })));
+        assert!(!schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "defs_only": { "$defs": { "X": { "type": "string" } } }
+            },
+            "additionalProperties": false
+        })));
+        assert!(!schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "tuple": {
+                    "type": "array",
+                    "prefixItems": [{ "description": "tuple slot" }]
+                }
+            },
+            "additionalProperties": false
+        })));
+        assert!(!schema_supports_strict(&json!({
+            "type": "array",
+            "prefixItems": [{ "description": "tuple slot" }]
+        })));
+        assert!(schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "tags": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+        })));
+        assert!(schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "tuple": {
+                    "type": "array",
+                    "prefixItems": [{ "type": "string" }]
+                }
+            },
             "additionalProperties": false
         })));
     }
