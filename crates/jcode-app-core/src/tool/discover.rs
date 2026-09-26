@@ -1657,7 +1657,9 @@ mod tests {
         assert!(listing_has_no_tool_entry(&json!({"tool": null})));
         assert!(listing_has_no_tool_entry(&json!({"tool": {}})));
         assert!(listing_has_no_tool_entry(&json!({"tool": "stripe"})));
-        assert!(listing_has_no_tool_entry(&json!({"tool": {"blurb": "example"}})));
+        assert!(listing_has_no_tool_entry(
+            &json!({"tool": {"blurb": "example"}})
+        ));
         assert!(!listing_has_no_tool_entry(&json!({"tool": {"name": "x"}})));
     }
 

@@ -188,17 +188,24 @@ fn real_output_after_assistant_turn_stays_adjacent_to_tool_use() {
 
     let assistant_idx = formatted
         .iter()
-        .position(|m| m.role == "assistant" && m.content.iter().any(|b| matches!(b, ApiContentBlock::ToolUse { .. })))
+        .position(|m| {
+            m.role == "assistant"
+                && m.content
+                    .iter()
+                    .any(|b| matches!(b, ApiContentBlock::ToolUse { .. }))
+        })
         .expect("assistant tool_use turn");
     let result_idx = formatted
         .iter()
         .position(|m| {
             m.role == "user"
-                && m.content.iter().any(|b| matches!(
-                    b,
-                    ApiContentBlock::ToolResult { content: ToolResultContent::Text(t), .. }
-                        if t == "real output"
-                ))
+                && m.content.iter().any(|b| {
+                    matches!(
+                        b,
+                        ApiContentBlock::ToolResult { content: ToolResultContent::Text(t), .. }
+                            if t == "real output"
+                    )
+                })
         })
         .expect("kept tool_result");
     assert_eq!(
