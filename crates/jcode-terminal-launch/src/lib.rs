@@ -777,6 +777,9 @@ fn macos_terminal_applescript(command: &TerminalCommand, cwd: &Path) -> String {
 }
 
 #[cfg(test)]
+#[path = "windows_portable_tests.rs"]
+mod windows_portable_tests;
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
