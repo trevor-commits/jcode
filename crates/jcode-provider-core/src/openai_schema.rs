@@ -257,16 +257,6 @@ fn schema_has_type_info(schema: &Value) -> bool {
         {
             return false;
         }
-        if let Some(defs) = map.get("$defs").and_then(Value::as_object)
-            && !all_children_typed(defs)
-        {
-            return false;
-        }
-        if let Some(defs) = map.get("definitions").and_then(Value::as_object)
-            && !all_children_typed(defs)
-        {
-            return false;
-        }
         if let Some(branches) = map.get("anyOf")
             && !all_branches_typed(branches)
         {
@@ -284,14 +274,17 @@ fn schema_has_type_info(schema: &Value) -> bool {
         }
         if let Some(items) = map.get("items") {
             let items_typed = match items {
-                Value::Array(tuple_items) => {
-                    !tuple_items.is_empty() && tuple_items.iter().all(schema_has_type_info)
-                }
+                Value::Array(_) => all_branches_typed(items),
                 other => schema_has_type_info(other),
             };
             if !items_typed {
                 return false;
             }
+        }
+        if let Some(prefix_items) = map.get("prefixItems")
+            && !all_branches_typed(prefix_items)
+        {
+            return false;
         }
 
         true
@@ -303,9 +296,8 @@ fn schema_has_type_info(schema: &Value) -> bool {
             || map.contains_key("allOf")
             || map.contains_key("properties")
             || map.contains_key("patternProperties")
-            || map.contains_key("$defs")
-            || map.contains_key("definitions")
             || map.contains_key("items")
+            || map.contains_key("prefixItems")
     }
 
     match schema {
@@ -334,16 +326,6 @@ fn schema_has_type_info(schema: &Value) -> bool {
             {
                 return true;
             }
-            if let Some(defs) = map.get("$defs").and_then(Value::as_object)
-                && all_children_typed(defs)
-            {
-                return true;
-            }
-            if let Some(defs) = map.get("definitions").and_then(Value::as_object)
-                && all_children_typed(defs)
-            {
-                return true;
-            }
             if let Some(branches) = map.get("anyOf")
                 && all_branches_typed(branches)
             {
@@ -359,11 +341,14 @@ fn schema_has_type_info(schema: &Value) -> bool {
             {
                 return true;
             }
+            if let Some(prefix_items) = map.get("prefixItems")
+                && all_branches_typed(prefix_items)
+            {
+                return true;
+            }
 
             match map.get("items") {
-                Some(Value::Array(tuple_items)) => {
-                    !tuple_items.is_empty() && tuple_items.iter().all(schema_has_type_info)
-                }
+                Some(items) if items.is_array() => all_branches_typed(items),
                 Some(other) => schema_has_type_info(other),
                 None => false,
             }
@@ -413,6 +398,11 @@ pub fn schema_supports_strict(schema: &Value) -> bool {
         }
         if let Some(Value::Object(defs)) = map.get("definitions")
             && defs.values().any(|def| !schema_has_type_info(def))
+        {
+            return false;
+        }
+        if (map.contains_key("items") || map.contains_key("prefixItems"))
+            && !schema_has_type_info(&Value::Object(map.clone()))
         {
             return false;
         }
@@ -793,10 +783,41 @@ mod tests {
             },
             "additionalProperties": false
         })));
+        assert!(!schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "defs_only": { "$defs": { "X": { "type": "string" } } }
+            },
+            "additionalProperties": false
+        })));
+        assert!(!schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "tuple": {
+                    "type": "array",
+                    "prefixItems": [{ "description": "tuple slot" }]
+                }
+            },
+            "additionalProperties": false
+        })));
+        assert!(!schema_supports_strict(&json!({
+            "type": "array",
+            "prefixItems": [{ "description": "tuple slot" }]
+        })));
         assert!(schema_supports_strict(&json!({
             "type": "object",
             "properties": {
                 "tags": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+        })));
+        assert!(schema_supports_strict(&json!({
+            "type": "object",
+            "properties": {
+                "tuple": {
+                    "type": "array",
+                    "prefixItems": [{ "type": "string" }]
+                }
             },
             "additionalProperties": false
         })));
