@@ -56,6 +56,81 @@ fn run_search(home: &Path, query: &str, options: &SearchOptions) -> Vec<SearchRe
     run_report(home, query, options).results
 }
 
+#[tokio::test]
+async fn session_search_permit_serializes_expensive_searches() {
+    let first = acquire_session_search_permit()
+        .await
+        .expect("first search permit");
+    let mut second = tokio::spawn(acquire_session_search_permit());
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut second)
+            .await
+            .is_err(),
+        "second search should wait while the first permit is held"
+    );
+
+    drop(first);
+    let second = tokio::time::timeout(std::time::Duration::from_secs(1), second)
+        .await
+        .expect("second search should be released")
+        .expect("second search task")
+        .expect("second search permit");
+    drop(second);
+}
+
+#[tokio::test]
+async fn session_search_gate_held_for_full_blocking_work() {
+    let held = acquire_session_search_permit()
+        .await
+        .expect("manually held permit");
+    let mut gated_work = tokio::spawn(async {
+        spawn_blocking_with_session_search_permit(|| {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        })
+        .await
+        .expect("gated blocking work");
+    });
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut gated_work)
+            .await
+            .is_err(),
+        "gated blocking work should wait for a held permit"
+    );
+
+    drop(held);
+    tokio::time::timeout(std::time::Duration::from_secs(1), gated_work)
+        .await
+        .expect("gated blocking work should run after the permit is released")
+        .expect("gated blocking task");
+}
+
+#[tokio::test]
+async fn session_search_warmup_shares_gate_with_blocking_work() {
+    let held = acquire_session_search_permit()
+        .await
+        .expect("manually held permit");
+    let mut warmup = tokio::spawn(async {
+        spawn_blocking_with_session_search_permit(warmup_recent_session_indexes)
+            .await
+            .expect("warmup blocking work");
+    });
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut warmup)
+            .await
+            .is_err(),
+        "index warmup should wait on the same gate as searches"
+    );
+
+    drop(held);
+    tokio::time::timeout(std::time::Duration::from_secs(1), warmup)
+        .await
+        .expect("warmup should run after the permit is released")
+        .expect("warmup task");
+}
+
 #[test]
 fn token_overlap_matches_when_exact_phrase_is_absent() {
     with_temp_home(|home| {
@@ -242,6 +317,107 @@ fn bench_real_session_search_corpus() {
             report.truncated
         );
     }
+}
+
+#[test]
+#[ignore = "local concurrent memory benchmark over the real external session corpus"]
+fn bench_real_concurrent_session_search_memory() {
+    if std::env::var("JCODE_SESSION_SEARCH_BENCH_REAL")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        eprintln!("set JCODE_SESSION_SEARCH_BENCH_REAL=1 to run against the real session corpus");
+        return;
+    }
+
+    with_temp_home(|home| {
+        let real_codex_sessions = dirs::home_dir()
+            .expect("real home directory")
+            .join(".codex/sessions");
+        let sandbox_codex = home.join("external/.codex");
+        std::fs::create_dir_all(&sandbox_codex).expect("create sandbox external directory");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_codex_sessions, sandbox_codex.join("sessions"))
+            .expect("link real Codex sessions read-only into benchmark sandbox");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&real_codex_sessions, sandbox_codex.join("sessions"))
+            .expect("link real Codex sessions read-only into benchmark sandbox");
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("benchmark runtime");
+        runtime.block_on(async {
+            let tool = SessionSearchTool::new();
+            let context = ToolContext {
+                session_id: "memory-benchmark-session".to_string(),
+                message_id: "memory-benchmark-message".to_string(),
+                tool_call_id: "memory-benchmark-call".to_string(),
+                working_dir: None,
+                stdin_request_tx: None,
+                graceful_shutdown_signal: None,
+                execution_mode: jcode_tool_core::ToolExecutionMode::Direct,
+            };
+            let input = |suffix: &str| {
+                json!({
+                    "query": format!("jcode-memory-benchmark-never-match-{suffix}"),
+                    "source": "codex",
+                    "include_external": true,
+                    "max_scan_sessions": 10_000
+                })
+            };
+
+            let before = crate::process_memory::snapshot_with_source("session_search_bench_before");
+            let start = Instant::now();
+            let (first, second, third) = tokio::join!(
+                tool.execute(input("alpha"), context.for_subcall("bench-1".to_string())),
+                tool.execute(input("beta"), context.for_subcall("bench-2".to_string())),
+                tool.execute(input("gamma"), context.for_subcall("bench-3".to_string())),
+            );
+            first.expect("first search");
+            second.expect("second search");
+            third.expect("third search");
+            let elapsed = start.elapsed();
+            let after = crate::process_memory::snapshot_with_source("session_search_bench_after");
+            let before_footprint = before
+                .os
+                .as_ref()
+                .and_then(|os| os.physical_footprint_bytes)
+                .expect("before physical footprint");
+            let peak_footprint = after
+                .os
+                .as_ref()
+                .and_then(|os| os.peak_physical_footprint_bytes)
+                .expect("peak physical footprint");
+            let growth = peak_footprint.saturating_sub(before_footprint);
+
+            eprintln!(
+                "BENCH_CONCURRENT elapsed_ms={} before_mib={} peak_mib={} growth_mib={}",
+                elapsed.as_millis(),
+                before_footprint / (1024 * 1024),
+                peak_footprint / (1024 * 1024),
+                growth / (1024 * 1024),
+            );
+            assert!(
+                peak_footprint < 3 * 1024 * 1024 * 1024,
+                "three concurrent searches exceeded 3 GiB: {peak_footprint} bytes"
+            );
+
+            let index_dir = index_dir().expect("index dir");
+            let leftovers = std::fs::read_dir(index_dir)
+                .expect("read index dir")
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".session-search-index-")
+                })
+                .count();
+            assert_eq!(leftovers, 0, "temporary index files should be cleaned up");
+        });
+    });
 }
 
 #[test]

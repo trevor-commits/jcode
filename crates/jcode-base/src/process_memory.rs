@@ -10,6 +10,12 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(target_os = "macos")]
+#[path = "process_memory_macos.rs"]
+mod process_memory_macos;
+#[cfg(target_os = "macos")]
+pub use process_memory_macos::snapshot_with_source;
+
 const MAX_HISTORY_SAMPLES: usize = 512;
 
 #[cfg(feature = "jemalloc")]
@@ -47,7 +53,15 @@ pub struct ProcessMemorySnapshot {
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct OsProcessMemoryInfo {
+    /// Linux proportional set size. On macOS this carries physical footprint,
+    /// the closest pressure metric and the value Activity Monitor emphasizes.
     pub pss_bytes: Option<u64>,
+    /// macOS physical footprint, including compressed/private dirty memory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub physical_footprint_bytes: Option<u64>,
+    /// Lifetime maximum macOS physical footprint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_physical_footprint_bytes: Option<u64>,
     /// Proportional set size of anonymous mappings (`Pss_Anon:` in
     /// smaps_rollup): heap + thread stacks + other private anon memory.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -177,7 +191,7 @@ pub fn snapshot_with_source(source: impl Into<String>) -> ProcessMemorySnapshot 
     snapshot
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
 pub fn snapshot_with_source(source: impl Into<String>) -> ProcessMemorySnapshot {
     let source = source.into();
     logging::debug(&format!(
@@ -696,6 +710,8 @@ fn read_linux_memory_info(status: &str) -> Option<OsProcessMemoryInfo> {
         pss_bytes: smaps
             .as_deref()
             .and_then(|text| parse_proc_value_bytes(text, "Pss:")),
+        physical_footprint_bytes: None,
+        peak_physical_footprint_bytes: None,
         pss_anon_bytes: smaps
             .as_deref()
             .and_then(|text| parse_proc_value_bytes(text, "Pss_Anon:")),
