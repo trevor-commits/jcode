@@ -96,18 +96,11 @@ struct TranscriptView: View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-                .tint(Theme.mint)
+                .tint(Theme.textTertiary)
             Text("thinking")
                 .font(Theme.mono(12))
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(Theme.textTertiary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Theme.surface)
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Thinking")
     }
 }
 
@@ -127,19 +120,15 @@ private struct ScrollToBottomButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "arrow.down")
-                .font(.subheadline.weight(.bold))
+                .font(.body.weight(.semibold))
                 .foregroundStyle(Theme.textPrimary)
-                .frame(width: 38, height: 38)
+                .frame(width: 44, height: 44)
                 .background(Theme.surfaceElevated)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(Theme.borderStrong, lineWidth: 1))
-                .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
-                .frame(width: 44, height: 44)
-                .contentShape(Circle())
+                .overlay(Circle().stroke(Theme.border, lineWidth: 1))
         }
-        .buttonStyle(PressableButtonStyle())
         .accessibilityLabel("Scroll to bottom")
         .accessibilityHint("Jumps to the latest message")
-        .transition(.scale(scale: 0.8).combined(with: .opacity))
+        .transition(.opacity)
     }
 }
