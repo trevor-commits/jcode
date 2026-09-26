@@ -32,11 +32,8 @@ fn keybinding_edit_applies_to_the_next_key_press() {
     )
     .expect("rewrite config");
 
-    // The config cache re-stats the file on a 500ms throttle, so wait past it
-    // to model a user who edits the file and then reaches for the keyboard.
-    std::thread::sleep(std::time::Duration::from_millis(600));
-
-    // The very next key press must already see the new binding.
+    // The very next key press must already see the new binding, even inside the
+    // production config cache's 500ms throttle window (tests use a zero throttle).
     app.handle_key_press_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL))
         .expect("handle key press");
 

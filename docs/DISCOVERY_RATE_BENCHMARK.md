@@ -163,8 +163,9 @@ meaningful when both arms use the same model and that model calls Discovery at
 least sometimes on the baseline.
 
 **Select rate is 0% everywhere, including Claude.** Not one trial across any
-model reached `action=select`, even when Claude browsed successfully on 20 of 24
-trials. Agents that browse summarize the listing and stop. This, not the browse
+model reached `action=select`, even when Claude browsed successfully on 15 of 18
+call trials (six capability-gap cases × three trials each at 83% browse recall).
+Agents that browse summarize the listing and stop. This, not the browse
 trigger, is the real gap: the intended policy is browse then select, and on the
 strongest model tested the second half never happened once.
 

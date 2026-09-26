@@ -219,7 +219,16 @@ async fn refresh_tokens_uncoordinated(tokens: &AntigravityTokens) -> Result<Anti
             let _ = crate::auth::refresh_state::record_success("antigravity");
         }
         Err(err) => {
-            let _ = crate::auth::refresh_state::record_failure("antigravity", err.to_string());
+            let message = err.to_string();
+            if crate::auth::refresh_state::error_is_permanent_rejection(&message) {
+                let _ = crate::auth::refresh_state::record_permanent_rejection(
+                    "antigravity",
+                    &tokens.refresh_token,
+                    &message,
+                );
+            } else {
+                let _ = crate::auth::refresh_state::record_failure("antigravity", message);
+            }
         }
     }
 

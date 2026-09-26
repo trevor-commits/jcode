@@ -31,8 +31,9 @@ To fully replace layer 1, create either file:
 - `~/.jcode/system-prompt.md` (global)
 
 The first non-empty file wins; otherwise the built-in default is used. An empty or
-whitespace-only file falls back to the default, so you cannot accidentally ship an
-empty prompt.
+whitespace-only project file does not count as a prompt — jcode then checks the
+global file, and only uses the built-in default when neither file supplies a
+non-empty prompt.
 
 This replaces only the base prompt. AGENTS.md, overlays, skills, and memory still apply.
 

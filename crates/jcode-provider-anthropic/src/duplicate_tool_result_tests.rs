@@ -174,6 +174,41 @@ fn message_left_empty_by_dedupe_is_dropped_and_roles_stay_valid() {
 }
 
 #[test]
+fn real_output_after_assistant_turn_stays_adjacent_to_tool_use() {
+    let messages = vec![
+        text_msg(Role::User, "Q"),
+        tool_use("toolu_1"),
+        tool_result("toolu_1", TOOL_OUTPUT_MISSING_TEXT, Some(true)),
+        text_msg(Role::Assistant, "checking status"),
+        tool_result("toolu_1", "real output", None),
+    ];
+
+    let formatted = format_messages(&messages, false);
+    assert_unique_tool_results(&formatted);
+
+    let assistant_idx = formatted
+        .iter()
+        .position(|m| m.role == "assistant" && m.content.iter().any(|b| matches!(b, ApiContentBlock::ToolUse { .. })))
+        .expect("assistant tool_use turn");
+    let result_idx = formatted
+        .iter()
+        .position(|m| {
+            m.role == "user"
+                && m.content.iter().any(|b| matches!(
+                    b,
+                    ApiContentBlock::ToolResult { content: ToolResultContent::Text(t), .. }
+                        if t == "real output"
+                ))
+        })
+        .expect("kept tool_result");
+    assert_eq!(
+        result_idx,
+        assistant_idx + 1,
+        "real output must replace the placeholder in the message right after the tool_use"
+    );
+}
+
+#[test]
 fn synthetic_interrupt_placeholder_text_is_also_treated_as_a_placeholder() {
     let messages = vec![
         text_msg(Role::User, "Q"),

@@ -69,14 +69,10 @@ fn mixed_edits_report_restart_only_for_the_restart_keys() {
     .expect("report");
 
     assert!(
-        report.contains("Restart required for: gateway.port"),
+        report.contains("Restart required for: display.centered, gateway.port"),
         "{report}"
     );
-    assert!(
-        report.contains("Other changes are already live"),
-        "{report}"
-    );
-    assert_eq!(liveness_for_key("display.centered"), Liveness::Live);
+    assert_eq!(liveness_for_key("display.centered"), Liveness::NeedsRestart);
 }
 
 #[test]
@@ -98,7 +94,7 @@ fn nested_tables_and_arrays_flatten_to_dotted_keys() {
 fn the_restart_required_list_is_the_reviewed_set() {
     assert_eq!(
         RESTART_REQUIRED_SECTIONS,
-        &["gateway", "acp", "launch_hotkeys"],
+        &["gateway", "acp", "launch_hotkeys", "display"],
         "changing which sections need a restart changes what users are told; \
          confirm the consuming code really snapshots the value at startup"
     );
@@ -112,7 +108,6 @@ fn the_restart_required_list_is_the_reviewed_set() {
 fn commonly_edited_sections_are_live() {
     for key in [
         "keybindings.scroll_up",
-        "display.centered",
         "features.thinking",
         "provider.openai_reasoning_effort",
         "agents.swarm_spawn_mode",

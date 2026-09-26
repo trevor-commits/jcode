@@ -45,6 +45,9 @@ const RESTART_REQUIRED_SECTIONS: &[&str] = &[
     "acp",
     // Launch hotkeys are baked into the desktop/launcher registration once.
     "launch_hotkeys",
+    // Display settings (`centered`, `diff_mode`, `diagram_mode`, ...) are copied
+    // into the TUI app during construction; only keybindings hot-reload today.
+    "display",
 ];
 
 /// Liveness of a dotted config key such as `keybindings.scroll_up`.

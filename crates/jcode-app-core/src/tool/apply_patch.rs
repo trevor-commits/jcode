@@ -93,10 +93,16 @@ impl Tool for ApplyPatchTool {
             match hunk {
                 PatchHunk::AddFile { path, contents } => {
                     let resolved = ctx.resolve_path(Path::new(path));
-                    if let Some(parent) = resolved.parent() {
-                        tokio::fs::create_dir_all(parent).await?;
+                    if let Some(parent) = resolved.parent()
+                        && let Err(error) = tokio::fs::create_dir_all(parent).await
+                    {
+                        results.push(format!("✗ {}: {}", path, error));
+                        continue;
                     }
-                    tokio::fs::write(&resolved, contents).await?;
+                    if let Err(error) = tokio::fs::write(&resolved, contents).await {
+                        results.push(format!("✗ {}: {}", path, error));
+                        continue;
+                    }
                     let diff = generate_diff_summary("", contents);
                     publish_file_touch(
                         &ctx,
@@ -164,10 +170,19 @@ impl Tool for ApplyPatchTool {
                             let diff = generate_diff_summary(&old_contents, &new_contents);
                             if let Some(dest) = move_to {
                                 let dest_resolved = ctx.resolve_path(Path::new(dest));
-                                if let Some(parent) = dest_resolved.parent() {
-                                    tokio::fs::create_dir_all(parent).await?;
+                                if let Some(parent) = dest_resolved.parent()
+                                    && let Err(error) =
+                                        tokio::fs::create_dir_all(parent).await
+                                {
+                                    results.push(format!("✗ {}: {}", path, error));
+                                    continue;
                                 }
-                                tokio::fs::write(&dest_resolved, &new_contents).await?;
+                                if let Err(error) =
+                                    tokio::fs::write(&dest_resolved, &new_contents).await
+                                {
+                                    results.push(format!("✗ {}: {}", path, error));
+                                    continue;
+                                }
                                 let _ = tokio::fs::remove_file(&resolved).await;
                                 publish_file_touch(
                                     &ctx,
@@ -203,8 +218,11 @@ impl Tool for ApplyPatchTool {
                                         diff
                                     ));
                                 }
+                            } else if let Err(error) =
+                                tokio::fs::write(&resolved, &new_contents).await
+                            {
+                                results.push(format!("✗ {}: {}", path, error));
                             } else {
-                                tokio::fs::write(&resolved, &new_contents).await?;
                                 publish_file_touch(
                                     &ctx,
                                     &resolved,
@@ -238,17 +256,19 @@ impl Tool for ApplyPatchTool {
             }
         }
 
-        if results.is_empty() {
-            Ok(ToolOutput::new("No changes applied"))
+        let mut body = if results.is_empty() {
+            "No changes applied".to_string()
         } else {
-            let mut body = results.join("\n");
-            config_watch.finish(&mut body);
-            let output = ToolOutput::new(body);
-            if touched_paths.len() == 1 {
-                Ok(output.with_title(touched_paths[0].clone()))
-            } else {
-                Ok(output.with_title(format!("{} files", touched_paths.len())))
-            }
+            results.join("\n")
+        };
+        config_watch.finish(&mut body);
+        let output = ToolOutput::new(body);
+        if touched_paths.len() == 1 {
+            Ok(output.with_title(touched_paths[0].clone()))
+        } else if touched_paths.is_empty() {
+            Ok(output)
+        } else {
+            Ok(output.with_title(format!("{} files", touched_paths.len())))
         }
     }
 }

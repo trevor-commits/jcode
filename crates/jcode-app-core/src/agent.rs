@@ -205,6 +205,8 @@ pub struct Agent {
     tool_result_ids: HashSet<String>,
     /// Number of stored session messages already indexed for missing tool-output repair.
     tool_output_scan_index: usize,
+    /// Tool calls skipped while still in flight, keyed by assistant message index.
+    deferred_inflight_tool_repairs: HashMap<String, usize>,
     /// Soft interrupt queue: messages to inject at next safe point without cancelling
     /// Uses std::sync::Mutex so it can be accessed without async, even while agent is processing
     soft_interrupt_queue: SoftInterruptQueue,
@@ -288,6 +290,7 @@ impl Agent {
             tool_call_ids: HashSet::new(),
             tool_result_ids: HashSet::new(),
             tool_output_scan_index: 0,
+            deferred_inflight_tool_repairs: HashMap::new(),
             soft_interrupt_queue: Arc::new(std::sync::Mutex::new(Vec::new())),
             background_tool_signal: InterruptSignal::new(),
             graceful_shutdown: InterruptSignal::new(),
@@ -796,6 +799,9 @@ impl Agent {
             }
         }
 
+        for id in &new_result_ids {
+            self.deferred_inflight_tool_repairs.remove(id);
+        }
         self.tool_result_ids.extend(new_result_ids);
 
         let mut missing_repairs: Vec<(usize, Vec<String>)> = Vec::new();
@@ -814,6 +820,7 @@ impl Agent {
                     logging::info(&format!(
                         "Skipping missing tool-output repair for {id}: tool is still executing"
                     ));
+                    self.deferred_inflight_tool_repairs.insert(id, index);
                     continue;
                 }
                 missing_for_message.push(id);
@@ -821,6 +828,22 @@ impl Agent {
             if !missing_for_message.is_empty() {
                 missing_repairs.push((index, missing_for_message));
             }
+        }
+
+        for (id, index) in self.deferred_inflight_tool_repairs.clone() {
+            if self.tool_result_ids.contains(&id) {
+                self.deferred_inflight_tool_repairs.remove(&id);
+                continue;
+            }
+            if crate::tool::inflight::is_tool_in_flight(&id) {
+                continue;
+            }
+            if let Some((_, ids)) = missing_repairs.iter_mut().find(|(msg_index, _)| *msg_index == index) {
+                ids.push(id.clone());
+            } else {
+                missing_repairs.push((index, vec![id.clone()]));
+            }
+            self.deferred_inflight_tool_repairs.remove(&id);
         }
 
         self.tool_output_scan_index = self.session.messages.len();
@@ -867,6 +890,7 @@ impl Agent {
         self.tool_call_ids.clear();
         self.tool_result_ids.clear();
         self.tool_output_scan_index = 0;
+        self.deferred_inflight_tool_repairs.clear();
     }
 
     pub fn session_id(&self) -> &str {

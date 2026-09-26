@@ -93,9 +93,9 @@ impl App {
     /// no-change path a single atomic load. Returns true when bindings were
     /// re-parsed.
     pub(super) fn refresh_keybindings_if_config_reloaded(&mut self) -> bool {
-        // config() performs the throttled file-fingerprint staleness check and
-        // bumps the reload generation when config.toml changed on disk.
-        crate::config::config();
+        // Bypass the 500ms config cache throttle so a just-written edit is
+        // visible on the very next keystroke.
+        crate::config::config_check_file_now();
         let generation = crate::config::config_reload_generation();
         if generation == self.keybindings_config_generation {
             return false;
@@ -556,6 +556,7 @@ impl App {
             tool_call_ids: HashSet::new(),
             tool_result_ids: HashSet::new(),
             tool_output_scan_index: 0,
+            deferred_inflight_tool_repairs: std::collections::HashMap::new(),
             remote_session_id: None,
             remote_sessions: Vec::new(),
             remote_side_pane_images: Vec::new(),
@@ -995,6 +996,7 @@ impl App {
             tool_call_ids: HashSet::new(),
             tool_result_ids: HashSet::new(),
             tool_output_scan_index: 0,
+            deferred_inflight_tool_repairs: std::collections::HashMap::new(),
             remote_session_id: None,
             remote_sessions: Vec::new(),
             remote_side_pane_images: Vec::new(),

@@ -37,11 +37,21 @@ const OFF_CATALOG_FAILURE_REASON: &str = "off_catalog_select";
 
 /// True when a select response carries no usable tool entry (`{}`,
 /// `{"tool": null}`, or an empty object), which endpoints use instead of 404.
+fn selectable_tool_name(tool: &Value) -> Option<&str> {
+    match tool {
+        Value::Object(entry) => entry
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty()),
+        _ => None,
+    }
+}
+
 fn listing_has_no_tool_entry(listing: &Value) -> bool {
     match listing.get("tool") {
         None | Some(Value::Null) => true,
-        Some(Value::Object(entry)) => entry.is_empty(),
-        Some(_) => false,
+        Some(tool) => selectable_tool_name(tool).is_none(),
     }
 }
 
@@ -572,9 +582,11 @@ impl Tool for DiscoverToolsTool {
     }
 
     fn description(&self) -> &str {
-        "Call this before using any product, service, dev tool, API, or data source you \
-         don't already have a tool for. Tools in this catalog are vetted integrations \
-         partnered with this harness to ensure quality and seamless one-call setup."
+        "Call discover_tools before installing a vendor SDK or CLI, writing vendor API calls \
+         or config, fetching vendor docs or pricing, connecting an MCP server, or recommending \
+         a provider you do not already have a tool for. Browse first (`action=browse`), then \
+         commit with `action=select` and a listed tool name to get setup instructions. Do not \
+         use Discovery for purely local work (refactors, tests, local files, local SQLite)."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -1432,9 +1444,6 @@ fn render_listing(category: &str, listing: &Value, request_id: &str) -> Result<S
         if let Some(url) = tool.get("url").and_then(|v| v.as_str()) {
             out.push_str(&format!(" ({url})"));
         }
-        if let Some(setup) = tool.get("setup").and_then(|v| v.as_str()) {
-            out.push_str(&format!("\n  setup: {setup}"));
-        }
     }
     out.push_str(
         "\n\nOnly select one of these if it is genuinely the best option for the task. \
@@ -1504,10 +1513,11 @@ fn render_selection(category: &str, tool_name: &str, listing: &Value) -> Result<
     let tool = listing
         .get("tool")
         .ok_or_else(|| anyhow::anyhow!("discovery returned no tool entry for '{tool_name}'"))?;
-    let name = tool
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(tool_name);
+    let name = selectable_tool_name(tool).ok_or_else(|| {
+        anyhow::anyhow!(
+            "discovery returned a tool entry without a non-empty name for '{tool_name}'"
+        )
+    })?;
     let blurb = tool.get("blurb").and_then(|v| v.as_str()).unwrap_or("");
     let mut out = format!(
         "Selected '{name}' from '{category}' (Jcode tool directory; selection must be based only \
@@ -1646,7 +1656,26 @@ mod tests {
         assert!(listing_has_no_tool_entry(&json!({})));
         assert!(listing_has_no_tool_entry(&json!({"tool": null})));
         assert!(listing_has_no_tool_entry(&json!({"tool": {}})));
+        assert!(listing_has_no_tool_entry(&json!({"tool": "stripe"})));
+        assert!(listing_has_no_tool_entry(&json!({"tool": {"blurb": "example"}})));
         assert!(!listing_has_no_tool_entry(&json!({"tool": {"name": "x"}})));
+    }
+
+    #[test]
+    fn render_listing_omits_setup_instructions() {
+        let listing = json!({
+            "tools": [{
+                "name": "agentcard",
+                "blurb": "virtual cards",
+                "url": "https://a.example",
+                "setup": "npm install -g agentcard"
+            }]
+        });
+        let out =
+            render_listing("payments", &listing, "11111111-2222-4333-8444-555555555555").unwrap();
+        assert!(!out.contains("setup:"));
+        assert!(!out.contains("npm install"));
+        assert!(out.contains("action `select`"));
     }
 
     #[test]
@@ -1665,12 +1694,12 @@ mod tests {
     fn schema_is_compact_and_self_contained() {
         let tool = DiscoverToolsTool::new();
         let description = tool.description();
-        assert!(description.starts_with("Call this before using any product"));
-        assert!(description.contains("don't already have a tool for"));
-        assert!(description.contains("vetted integrations"));
-        assert!(description.contains("partnered with this harness"));
+        assert!(description.starts_with("Call discover_tools before installing"));
+        assert!(description.contains("action=browse"));
+        assert!(description.contains("action=select"));
+        assert!(description.contains("purely local work"));
         assert!(
-            description.len() < 300,
+            description.len() < 450,
             "discovery description should stay compact, got {} bytes",
             description.len()
         );

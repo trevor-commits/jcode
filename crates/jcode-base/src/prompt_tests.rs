@@ -432,7 +432,10 @@ fn test_selfdev_prompt_uses_desktop2_focus_for_desktop2_working_dir() {
 fn project_system_prompt_file_replaces_default_base_prompt() {
     use crate::prompt::load_base_system_prompt;
 
+    let _guard = crate::storage::lock_test_env();
     let dir = std::env::temp_dir().join(format!("jcode-sysprompt-{}", std::process::id()));
+    let prev_home = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", &dir);
     let jcode_dir = dir.join(".jcode");
     std::fs::create_dir_all(&jcode_dir).unwrap();
     std::fs::write(
@@ -450,9 +453,15 @@ fn project_system_prompt_file_replaces_default_base_prompt() {
     assert!(prompt.contains("You are a custom agent."));
     assert!(!prompt.contains("Jcode is open source"));
 
-    // Empty override falls back to the built-in default.
+    // Empty project override falls back to the built-in default when the global
+    // file is also absent or empty.
     std::fs::write(jcode_dir.join("system-prompt.md"), "   \n").unwrap();
     assert_eq!(load_base_system_prompt(Some(&dir)), DEFAULT_SYSTEM_PROMPT);
 
+    if let Some(prev_home) = prev_home {
+        crate::env::set_var("JCODE_HOME", prev_home);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
     std::fs::remove_dir_all(&dir).ok();
 }

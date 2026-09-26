@@ -252,6 +252,21 @@ fn populate_context_limits_from_config_ref(cfg: &Config) {
 /// throttle, not every frame. When those inputs change, the next checked call
 /// reloads config.toml and invalidates dependent auth/model caches. Older
 /// references remain valid for the duration of any in-flight operation.
+/// Re-check the on-disk config fingerprint even inside the normal throttle
+/// window. Use before keystroke dispatch so a just-written `config.toml` edit
+/// is visible immediately.
+pub fn config_check_file_now() -> &'static Config {
+    if CONFIG_CACHE_CHECK_INTERVAL.is_zero() {
+        return config();
+    }
+    let mut cache = CONFIG_CACHE
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.last_checked = Instant::now() - CONFIG_CACHE_CHECK_INTERVAL - Duration::from_nanos(1);
+    drop(cache);
+    config()
+}
+
 pub fn config() -> &'static Config {
     let now = Instant::now();
     if let Ok(cache) = CONFIG_CACHE.read()

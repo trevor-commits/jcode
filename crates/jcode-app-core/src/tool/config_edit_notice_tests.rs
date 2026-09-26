@@ -111,10 +111,11 @@ fn the_notice_leaves_the_config_cache_current() {
     let notice =
         config_edit_notice(&path, "[display]\ncentered = false\n", after).expect("report expected");
 
-    assert!(notice.contains("live now"), "{notice}");
+    assert!(notice.contains("needs restart"), "{notice}");
+    assert!(notice.contains("display.centered"), "{notice}");
     assert!(
         crate::config::config().display.centered,
-        "claiming 'live now' requires the config cache to already reflect the edit"
+        "the config cache should still reload after the notice invalidates it"
     );
 
     restore_jcode_home(prev);
@@ -133,7 +134,7 @@ fn a_config_write_that_breaks_toml_syntax_is_reported_loudly() {
     let notice = config_edit_notice(&path, "[display]\ncentered = true\n", broken)
         .expect("a config file that stopped parsing must never be silent");
     assert!(notice.contains("WARNING"), "{notice}");
-    assert!(notice.contains("no longer parses"), "{notice}");
+    assert!(notice.contains("no longer loads as a valid jcode config"), "{notice}");
 
     restore_jcode_home(prev);
 }
@@ -179,14 +180,14 @@ async fn the_write_tool_reports_config_changes_end_to_end() {
 
     let body = output.output;
     assert!(body.contains("display.centered"), "{body}");
-    assert!(body.contains("live now"), "{body}");
+    assert!(body.contains("needs restart"), "{body}");
     assert!(
-        body.contains("Restart required for: gateway.port"),
+        body.contains("Restart required for: display.centered, gateway.port"),
         "{body}"
     );
     assert!(
         crate::config::config().display.centered,
-        "the display change should be live in-process immediately after the write"
+        "the config cache should reload even though the TUI snapshots display settings at startup"
     );
 
     restore_jcode_home(prev);
@@ -227,10 +228,14 @@ async fn apply_patch_reports_config_changes() {
 
     let body = output.output;
     assert!(body.contains("display.centered"), "{body}");
-    assert!(body.contains("live now"), "{body}");
+    assert!(body.contains("needs restart"), "{body}");
+    assert!(
+        body.contains("Restart required for: display.centered"),
+        "{body}"
+    );
     assert!(
         crate::config::config().display.centered,
-        "the patched setting should be live immediately"
+        "the config cache should reload even though the TUI snapshots display settings at startup"
     );
 
     restore_jcode_home(prev);

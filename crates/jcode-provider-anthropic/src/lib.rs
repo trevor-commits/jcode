@@ -219,10 +219,12 @@ fn is_placeholder_tool_result(content: &str, is_error: Option<bool>) -> bool {
 fn dedupe_tool_results(messages: &[Message]) -> Vec<Message> {
     use std::collections::HashMap;
 
-    // Winner position per tool_use_id: the first real result if one exists,
-    // otherwise the first occurrence at all.
+    // Winner position per tool_use_id stays at the first occurrence so the kept
+    // tool_result remains adjacent to its tool_use. Payload upgrades to the
+    // first real result when a later duplicate arrives.
     let mut winner: HashMap<&str, (usize, usize)> = HashMap::new();
     let mut winner_is_real: HashMap<&str, bool> = HashMap::new();
+    let mut payload: HashMap<&str, (String, Option<bool>)> = HashMap::new();
     let mut duplicate_seen = false;
 
     for (mi, msg) in messages.iter().enumerate() {
@@ -240,10 +242,10 @@ fn dedupe_tool_results(messages: &[Message]) -> Vec<Message> {
                 None => {
                     winner.insert(tool_use_id, (mi, bi));
                     winner_is_real.insert(tool_use_id, real);
+                    payload.insert(tool_use_id, (content.clone(), *is_error));
                 }
                 Some(false) if real => {
-                    // Upgrade a placeholder winner to the real output.
-                    winner.insert(tool_use_id, (mi, bi));
+                    payload.insert(tool_use_id, (content.clone(), *is_error));
                     winner_is_real.insert(tool_use_id, true);
                     duplicate_seen = true;
                 }
@@ -275,6 +277,19 @@ fn dedupe_tool_results(messages: &[Message]) -> Vec<Message> {
                 }
                 keep
             });
+            for block in &mut msg.content {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } = block
+                {
+                    if let Some((best_content, best_error)) = payload.get(tool_use_id.as_str()) {
+                        *content = best_content.clone();
+                        *is_error = *best_error;
+                    }
+                }
+            }
             msg
         })
         .collect();
