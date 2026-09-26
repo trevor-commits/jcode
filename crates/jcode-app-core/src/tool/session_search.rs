@@ -5,7 +5,10 @@
 //! - snapshot + journal persistence is searched so recent messages are visible
 //! - results are grouped by session by default to avoid duplicate floods
 
-use super::session_search_gate::acquire_session_search_permit;
+use super::session_search_gate::spawn_blocking_with_session_search_permit;
+
+#[cfg(test)]
+pub(super) use super::session_search_gate::acquire_session_search_permit;
 use super::session_search_index::{self, IndexFileSpec};
 use super::{Tool, ToolContext, ToolOutput};
 use crate::message::ContentBlock;
@@ -139,53 +142,60 @@ impl Default for SessionSearchTool {
 /// interactive `session_search` call does not pay the cold indexing cost.
 /// Covers the jcode store plus the external stores (claude/codex/pi/cursor).
 pub fn spawn_recent_index_warmup() {
-    tokio::task::spawn_blocking(|| {
-        let start = std::time::Instant::now();
-        remove_legacy_index();
-        let empty_query = QueryProfile::new("__jcode_index_warmup__");
-
-        let jcode_count = (|| -> Result<usize> {
-            let sessions_dir = storage::jcode_dir()?.join("sessions");
-            let collection = collect_session_files(&sessions_dir, DEFAULT_MAX_SCAN_SESSIONS)?;
-            if collection.files.is_empty() {
-                return Ok(0);
-            }
-            let _ = jcode_index_candidates(&collection.files, &empty_query)?;
-            Ok(collection.files.len())
-        })()
-        .unwrap_or_else(|err| {
-            crate::logging::info(&format!("jcode session index warmup skipped: {err}"));
-            0
-        });
-
-        let mut external_count = 0usize;
-        for (source, root_relative) in [
-            ("codex", ".codex/sessions"),
-            ("pi", ".pi/agent/sessions"),
-            ("cursor", ".cursor/projects"),
-        ] {
-            let Ok(root) = crate::storage::user_home_path(root_relative) else {
-                continue;
-            };
-            if !root.exists() {
-                continue;
-            }
-            let paths = collect_recent_files_recursive(&root, "jsonl", DEFAULT_MAX_SCAN_SESSIONS);
-            external_count += paths.len();
-            let _ = external_index_candidate_paths(source, &paths, &empty_query);
-        }
-        if let Ok(sessions) =
-            crate::import::list_claude_code_sessions_lazy(DEFAULT_MAX_SCAN_SESSIONS)
+    tokio::spawn(async {
+        if let Err(err) = spawn_blocking_with_session_search_permit(warmup_recent_session_indexes)
+            .await
         {
-            external_count += sessions.len();
-            let _ = claude_index_candidates(&sessions, &empty_query);
+            crate::logging::info(&format!("session search index warmup skipped: {err}"));
         }
-
-        crate::logging::info(&format!(
-            "Session search index warmup completed for {jcode_count} jcode + {external_count} external session(s) in {}ms",
-            start.elapsed().as_millis()
-        ));
     });
+}
+
+fn warmup_recent_session_indexes() {
+    let start = std::time::Instant::now();
+    remove_legacy_index();
+    let empty_query = QueryProfile::new("__jcode_index_warmup__");
+
+    let jcode_count = (|| -> Result<usize> {
+        let sessions_dir = storage::jcode_dir()?.join("sessions");
+        let collection = collect_session_files(&sessions_dir, DEFAULT_MAX_SCAN_SESSIONS)?;
+        if collection.files.is_empty() {
+            return Ok(0);
+        }
+        let _ = jcode_index_candidates(&collection.files, &empty_query)?;
+        Ok(collection.files.len())
+    })()
+    .unwrap_or_else(|err| {
+        crate::logging::info(&format!("jcode session index warmup skipped: {err}"));
+        0
+    });
+
+    let mut external_count = 0usize;
+    for (source, root_relative) in [
+        ("codex", ".codex/sessions"),
+        ("pi", ".pi/agent/sessions"),
+        ("cursor", ".cursor/projects"),
+    ] {
+        let Ok(root) = crate::storage::user_home_path(root_relative) else {
+            continue;
+        };
+        if !root.exists() {
+            continue;
+        }
+        let paths = collect_recent_files_recursive(&root, "jsonl", DEFAULT_MAX_SCAN_SESSIONS);
+        external_count += paths.len();
+        let _ = external_index_candidate_paths(source, &paths, &empty_query);
+    }
+    if let Ok(sessions) = crate::import::list_claude_code_sessions_lazy(DEFAULT_MAX_SCAN_SESSIONS)
+    {
+        external_count += sessions.len();
+        let _ = claude_index_candidates(&sessions, &empty_query);
+    }
+
+    crate::logging::info(&format!(
+        "Session search index warmup completed for {jcode_count} jcode + {external_count} external session(s) in {}ms",
+        start.elapsed().as_millis()
+    ));
 }
 
 #[derive(Debug, Clone)]
@@ -511,12 +521,10 @@ impl Tool for SessionSearchTool {
             exhaustive,
         };
 
-        let _search_permit = acquire_session_search_permit().await?;
-        let report = tokio::task::spawn_blocking({
-            let session_id = ctx.session_id.clone();
-            let query = query.clone();
-            let options = options.clone();
-            move || search_sessions_blocking(&sessions_dir, &query, &options, &session_id)
+        let session_id = ctx.session_id.clone();
+        let search_options = options.clone();
+        let report = spawn_blocking_with_session_search_permit(move || {
+            search_sessions_blocking(&sessions_dir, &query, &search_options, &session_id)
         })
         .await??;
 

@@ -79,6 +79,58 @@ async fn session_search_permit_serializes_expensive_searches() {
     drop(second);
 }
 
+#[tokio::test]
+async fn session_search_gate_held_for_full_blocking_work() {
+    let held = acquire_session_search_permit()
+        .await
+        .expect("manually held permit");
+    let mut gated_work = tokio::spawn(async {
+        spawn_blocking_with_session_search_permit(|| {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        })
+        .await
+        .expect("gated blocking work");
+    });
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut gated_work)
+            .await
+            .is_err(),
+        "gated blocking work should wait for a held permit"
+    );
+
+    drop(held);
+    tokio::time::timeout(std::time::Duration::from_secs(1), gated_work)
+        .await
+        .expect("gated blocking work should run after the permit is released")
+        .expect("gated blocking task");
+}
+
+#[tokio::test]
+async fn session_search_warmup_shares_gate_with_blocking_work() {
+    let held = acquire_session_search_permit()
+        .await
+        .expect("manually held permit");
+    let mut warmup = tokio::spawn(async {
+        spawn_blocking_with_session_search_permit(warmup_recent_session_indexes)
+            .await
+            .expect("warmup blocking work");
+    });
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut warmup)
+            .await
+            .is_err(),
+        "index warmup should wait on the same gate as searches"
+    );
+
+    drop(held);
+    tokio::time::timeout(std::time::Duration::from_secs(1), warmup)
+        .await
+        .expect("warmup should run after the permit is released")
+        .expect("warmup task");
+}
+
 #[test]
 fn token_overlap_matches_when_exact_phrase_is_absent() {
     with_temp_home(|home| {
