@@ -171,8 +171,7 @@ impl Tool for ApplyPatchTool {
                             if let Some(dest) = move_to {
                                 let dest_resolved = ctx.resolve_path(Path::new(dest));
                                 if let Some(parent) = dest_resolved.parent()
-                                    && let Err(error) =
-                                        tokio::fs::create_dir_all(parent).await
+                                    && let Err(error) = tokio::fs::create_dir_all(parent).await
                                 {
                                     results.push(format!("✗ {}: {}", path, error));
                                     continue;

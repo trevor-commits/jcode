@@ -143,8 +143,8 @@ impl Default for SessionSearchTool {
 /// Covers the jcode store plus the external stores (claude/codex/pi/cursor).
 pub fn spawn_recent_index_warmup() {
     tokio::spawn(async {
-        if let Err(err) = spawn_blocking_with_session_search_permit(warmup_recent_session_indexes)
-            .await
+        if let Err(err) =
+            spawn_blocking_with_session_search_permit(warmup_recent_session_indexes).await
         {
             crate::logging::info(&format!("session search index warmup skipped: {err}"));
         }
@@ -186,8 +186,7 @@ fn warmup_recent_session_indexes() {
         external_count += paths.len();
         let _ = external_index_candidate_paths(source, &paths, &empty_query);
     }
-    if let Ok(sessions) = crate::import::list_claude_code_sessions_lazy(DEFAULT_MAX_SCAN_SESSIONS)
-    {
+    if let Ok(sessions) = crate::import::list_claude_code_sessions_lazy(DEFAULT_MAX_SCAN_SESSIONS) {
         external_count += sessions.len();
         let _ = claude_index_candidates(&sessions, &empty_query);
     }

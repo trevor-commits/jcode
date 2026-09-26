@@ -740,7 +740,10 @@ impl App {
             if crate::tool::inflight::is_tool_in_flight(&id) {
                 continue;
             }
-            if let Some((_, ids)) = missing_repairs.iter_mut().find(|(msg_index, _)| *msg_index == index) {
+            if let Some((_, ids)) = missing_repairs
+                .iter_mut()
+                .find(|(msg_index, _)| *msg_index == index)
+            {
                 ids.push(id.clone());
             } else {
                 missing_repairs.push((index, vec![id.clone()]));

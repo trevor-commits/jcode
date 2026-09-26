@@ -283,11 +283,10 @@ fn dedupe_tool_results(messages: &[Message]) -> Vec<Message> {
                     content,
                     is_error,
                 } = block
+                    && let Some((best_content, best_error)) = payload.get(tool_use_id.as_str())
                 {
-                    if let Some((best_content, best_error)) = payload.get(tool_use_id.as_str()) {
-                        *content = best_content.clone();
-                        *is_error = *best_error;
-                    }
+                    *content = best_content.clone();
+                    *is_error = *best_error;
                 }
             }
             msg

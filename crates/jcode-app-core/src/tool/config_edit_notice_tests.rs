@@ -134,7 +134,10 @@ fn a_config_write_that_breaks_toml_syntax_is_reported_loudly() {
     let notice = config_edit_notice(&path, "[display]\ncentered = true\n", broken)
         .expect("a config file that stopped parsing must never be silent");
     assert!(notice.contains("WARNING"), "{notice}");
-    assert!(notice.contains("no longer loads as a valid jcode config"), "{notice}");
+    assert!(
+        notice.contains("no longer loads as a valid jcode config"),
+        "{notice}"
+    );
 
     restore_jcode_home(prev);
 }
