@@ -234,6 +234,7 @@ impl App {
         self.tool_call_ids.clear();
         self.tool_result_ids.clear();
         self.tool_output_scan_index = 0;
+        self.deferred_inflight_tool_repairs.clear();
     }
 
     pub(super) fn reseed_compaction_from_provider_messages(&mut self) {
@@ -701,6 +702,9 @@ impl App {
             }
         }
 
+        for id in &new_result_ids {
+            self.deferred_inflight_tool_repairs.remove(id);
+        }
         self.tool_result_ids.extend(new_result_ids);
 
         let mut missing_repairs = Vec::new();
@@ -708,13 +712,40 @@ impl App {
             let mut missing_for_message = Vec::new();
             for id in tool_uses {
                 self.tool_call_ids.insert(id.clone());
-                if !self.tool_result_ids.contains(&id) {
-                    missing_for_message.push(id);
+                if self.tool_result_ids.contains(&id) {
+                    continue;
                 }
+                // Still-executing tools will deliver their own result; a
+                // placeholder here becomes a duplicate tool_result that
+                // Anthropic rejects. See `jcode_app_core::tool::inflight`.
+                if crate::tool::inflight::is_tool_in_flight(&id) {
+                    crate::logging::info(&format!(
+                        "Skipping missing tool-output repair for {id}: tool is still executing"
+                    ));
+                    self.deferred_inflight_tool_repairs.insert(id, index);
+                    continue;
+                }
+                missing_for_message.push(id);
             }
             if !missing_for_message.is_empty() {
                 missing_repairs.push((index, missing_for_message));
             }
+        }
+
+        for (id, index) in self.deferred_inflight_tool_repairs.clone() {
+            if self.tool_result_ids.contains(&id) {
+                self.deferred_inflight_tool_repairs.remove(&id);
+                continue;
+            }
+            if crate::tool::inflight::is_tool_in_flight(&id) {
+                continue;
+            }
+            if let Some((_, ids)) = missing_repairs.iter_mut().find(|(msg_index, _)| *msg_index == index) {
+                ids.push(id.clone());
+            } else {
+                missing_repairs.push((index, vec![id.clone()]));
+            }
+            self.deferred_inflight_tool_repairs.remove(&id);
         }
 
         self.tool_output_scan_index = message_len;

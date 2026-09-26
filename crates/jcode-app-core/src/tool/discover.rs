@@ -30,6 +30,44 @@ const DISCOVERY_QUERY_MAX_CHARS: usize = 500;
 const DISCOVERY_REASON_MIN_CHARS: usize = 40;
 const DISCOVERY_REASON_MAX_CHARS: usize = 2_000;
 
+/// Telemetry reason for a `select` naming an entry the catalog does not carry.
+/// Kept distinct from transport failures so the rate of agents committing to
+/// off-catalog products is measurable rather than hidden in `http_error`.
+const OFF_CATALOG_FAILURE_REASON: &str = "off_catalog_select";
+
+/// True when a select response carries no usable tool entry (`{}`,
+/// `{"tool": null}`, or an empty object), which endpoints use instead of 404.
+fn selectable_tool_name(tool: &Value) -> Option<&str> {
+    match tool {
+        Value::Object(entry) => entry
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty()),
+        _ => None,
+    }
+}
+
+fn listing_has_no_tool_entry(listing: &Value) -> bool {
+    match listing.get("tool") {
+        None | Some(Value::Null) => true,
+        Some(tool) => selectable_tool_name(tool).is_none(),
+    }
+}
+
+/// Error shown when a select names something outside the catalog. It tells the
+/// agent the two legitimate recoveries: pick a listed entry, or record the gap.
+fn off_catalog_select_error(category: &str, tool_name: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "'{tool_name}' is not in the Jcode catalog for '{category}'. Only entries returned by \
+         action `browse` can be selected; this name did not come from a listing. Either select \
+         one of the listed entries, or, if none fits, call action `suggest` with \
+         `suggestion_kind: known_product`, `product_name: {tool_name}`, and the \
+         `prior_request_id` from your browse so maintainers see the gap. Do not install or \
+         configure '{tool_name}' from memory as if Discovery had vetted it."
+    )
+}
+
 fn discovery_benchmark_run() -> bool {
     std::env::var(DISCOVERY_BENCHMARK_ENV)
         .ok()
@@ -544,9 +582,11 @@ impl Tool for DiscoverToolsTool {
     }
 
     fn description(&self) -> &str {
-        "Call this before using any product, service, dev tool, API, or data source you \
-         don't already have a tool for. Tools in this catalog are vetted integrations \
-         partnered with this harness to ensure quality and seamless one-call setup."
+        "Call discover_tools before installing a vendor SDK or CLI, writing vendor API calls \
+         or config, fetching vendor docs or pricing, connecting an MCP server, or recommending \
+         a provider you do not already have a tool for. Browse first (`action=browse`), then \
+         commit with `action=select` and a listed tool name to get setup instructions. Do not \
+         use Discovery for purely local work (refactors, tests, local files, local SQLite)."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -824,6 +864,29 @@ impl Tool for DiscoverToolsTool {
             let fetched = match fetch_listing(&discovery_request, Some(&tool_name)).await {
                 Ok(result) => result,
                 Err(err) => {
+                    // A 404 on select means the agent committed to a name the
+                    // catalog does not carry (usually a product it recalled
+                    // from training, not one it saw in browse). That is a
+                    // distinct behavior from a broken endpoint, so it gets its
+                    // own outcome and its own recovery instruction.
+                    if err.http_status == Some(404) {
+                        record_discovery_telemetry(
+                            &request_id,
+                            started_at,
+                            &endpoint,
+                            "select",
+                            Some(&category),
+                            Some(tool_name.as_str()),
+                            "off_catalog_select",
+                            Some(OFF_CATALOG_FAILURE_REASON),
+                            err.http_status,
+                            err.response_bytes,
+                            Some(0),
+                            query_present,
+                            reason_present,
+                        );
+                        return Err(off_catalog_select_error(&category, &tool_name));
+                    }
                     record_discovery_telemetry(
                         &request_id,
                         started_at,
@@ -842,6 +905,26 @@ impl Tool for DiscoverToolsTool {
                     return Err(err.into());
                 }
             };
+            // Endpoints may also answer 200 with an empty entry. Same meaning:
+            // the selected name is not in the catalog.
+            if listing_has_no_tool_entry(&fetched.listing) {
+                record_discovery_telemetry(
+                    &request_id,
+                    started_at,
+                    &endpoint,
+                    "select",
+                    Some(&category),
+                    Some(tool_name.as_str()),
+                    "off_catalog_select",
+                    Some(OFF_CATALOG_FAILURE_REASON),
+                    Some(fetched.http_status),
+                    Some(fetched.response_bytes),
+                    Some(0),
+                    query_present,
+                    reason_present,
+                );
+                return Err(off_catalog_select_error(&category, &tool_name));
+            }
             let rendered = match render_selection(&category, &tool_name, &fetched.listing) {
                 Ok(rendered) => rendered,
                 Err(err) => {
@@ -1361,9 +1444,6 @@ fn render_listing(category: &str, listing: &Value, request_id: &str) -> Result<S
         if let Some(url) = tool.get("url").and_then(|v| v.as_str()) {
             out.push_str(&format!(" ({url})"));
         }
-        if let Some(setup) = tool.get("setup").and_then(|v| v.as_str()) {
-            out.push_str(&format!("\n  setup: {setup}"));
-        }
     }
     out.push_str(
         "\n\nOnly select one of these if it is genuinely the best option for the task. \
@@ -1433,10 +1513,11 @@ fn render_selection(category: &str, tool_name: &str, listing: &Value) -> Result<
     let tool = listing
         .get("tool")
         .ok_or_else(|| anyhow::anyhow!("discovery returned no tool entry for '{tool_name}'"))?;
-    let name = tool
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(tool_name);
+    let name = selectable_tool_name(tool).ok_or_else(|| {
+        anyhow::anyhow!(
+            "discovery returned a tool entry without a non-empty name for '{tool_name}'"
+        )
+    })?;
     let blurb = tool.get("blurb").and_then(|v| v.as_str()).unwrap_or("");
     let mut out = format!(
         "Selected '{name}' from '{category}' (Jcode tool directory; selection must be based only \
@@ -1567,16 +1648,58 @@ mod tests {
         );
     }
 
+    /// A select naming something the catalog does not carry is a distinct
+    /// behavior (the agent committed to a remembered product) and must not be
+    /// reported as a generic endpoint failure.
+    #[test]
+    fn empty_select_response_is_off_catalog() {
+        assert!(listing_has_no_tool_entry(&json!({})));
+        assert!(listing_has_no_tool_entry(&json!({"tool": null})));
+        assert!(listing_has_no_tool_entry(&json!({"tool": {}})));
+        assert!(listing_has_no_tool_entry(&json!({"tool": "stripe"})));
+        assert!(listing_has_no_tool_entry(&json!({"tool": {"blurb": "example"}})));
+        assert!(!listing_has_no_tool_entry(&json!({"tool": {"name": "x"}})));
+    }
+
+    #[test]
+    fn render_listing_omits_setup_instructions() {
+        let listing = json!({
+            "tools": [{
+                "name": "agentcard",
+                "blurb": "virtual cards",
+                "url": "https://a.example",
+                "setup": "npm install -g agentcard"
+            }]
+        });
+        let out =
+            render_listing("payments", &listing, "11111111-2222-4333-8444-555555555555").unwrap();
+        assert!(!out.contains("setup:"));
+        assert!(!out.contains("npm install"));
+        assert!(out.contains("action `select`"));
+    }
+
+    #[test]
+    fn off_catalog_error_names_both_recoveries() {
+        let message = off_catalog_select_error("payments", "stripe").to_string();
+        assert!(message.contains("not in the Jcode catalog"));
+        assert!(message.contains("stripe"));
+        assert!(message.contains("action `suggest`"));
+        assert!(message.contains("known_product"));
+        assert!(message.contains("prior_request_id"));
+        // Must not tempt the agent into setting it up from memory.
+        assert!(message.contains("Do not install"));
+    }
+
     #[test]
     fn schema_is_compact_and_self_contained() {
         let tool = DiscoverToolsTool::new();
         let description = tool.description();
-        assert!(description.starts_with("Call this before using any product"));
-        assert!(description.contains("don't already have a tool for"));
-        assert!(description.contains("vetted integrations"));
-        assert!(description.contains("partnered with this harness"));
+        assert!(description.starts_with("Call discover_tools before installing"));
+        assert!(description.contains("action=browse"));
+        assert!(description.contains("action=select"));
+        assert!(description.contains("purely local work"));
         assert!(
-            description.len() < 300,
+            description.len() < 450,
             "discovery description should stay compact, got {} bytes",
             description.len()
         );

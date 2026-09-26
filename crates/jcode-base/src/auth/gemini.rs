@@ -322,7 +322,16 @@ async fn refresh_tokens_uncoordinated(tokens: &GeminiTokens) -> Result<GeminiTok
             let _ = crate::auth::refresh_state::record_success("gemini");
         }
         Err(err) => {
-            let _ = crate::auth::refresh_state::record_failure("gemini", err.to_string());
+            let message = err.to_string();
+            if crate::auth::refresh_state::error_is_permanent_rejection(&message) {
+                let _ = crate::auth::refresh_state::record_permanent_rejection(
+                    "gemini",
+                    &tokens.refresh_token,
+                    &message,
+                );
+            } else {
+                let _ = crate::auth::refresh_state::record_failure("gemini", message);
+            }
         }
     }
 

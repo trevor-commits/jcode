@@ -1215,6 +1215,8 @@ pub struct App {
     tool_result_ids: HashSet<String>,
     // Number of provider messages already indexed for missing tool-output repair
     tool_output_scan_index: usize,
+    // Tool calls skipped while still in flight, keyed by assistant message index
+    deferred_inflight_tool_repairs: std::collections::HashMap<String, usize>,
     // Current session ID (from server in remote mode)
     remote_session_id: Option<String>,
     // All sessions on the server (remote mode only)
