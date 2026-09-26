@@ -339,7 +339,10 @@ fn append_named_todos(message: &mut String, lead: &str, todos: &[&TodoItem]) {
 /// check, so the model re-validates those items instead of guessing which part
 /// of its work was doubted. Scores and thresholds stay private; only the reason
 /// category per todo is disclosed.
-pub fn build_todo_completion_continuation_message(todos: &[TodoItem]) -> String {
+pub fn build_todo_completion_continuation_message(
+    todos: &[TodoItem],
+    confidence_threshold: u8,
+) -> String {
     let completed: Vec<&TodoItem> = todos
         .iter()
         .filter(|todo| todo.status == "completed")
@@ -354,7 +357,7 @@ pub fn build_todo_completion_continuation_message(todos: &[TodoItem]) -> String 
         .copied()
         .filter(|todo| {
             todo.completion_confidence
-                .is_some_and(|score| score < QUALITY_GATE_THRESHOLD)
+                .is_some_and(|score| score < confidence_threshold)
         })
         .collect();
 
@@ -953,8 +956,10 @@ mod tests {
         strong.completion_confidence = Some(99);
         let open = todo("ship it", "in_progress", None);
 
-        let message =
-            build_todo_completion_continuation_message(&[missing, weak, strong.clone(), open]);
+        let message = build_todo_completion_continuation_message(
+            &[missing, weak, strong.clone(), open],
+            QUALITY_GATE_THRESHOLD,
+        );
         assert!(message.starts_with(TODO_COMPLETION_CONTINUATION_MESSAGE));
         assert!(message.contains("\"write the parser\""));
         assert!(message.contains("\"wire up the CLI flag\""));
@@ -967,7 +972,8 @@ mod tests {
 
         // Only the weighted average failed: no individual item is nameable, so
         // the fallback still tells the model what to do.
-        let average_only = build_todo_completion_continuation_message(&[strong]);
+        let average_only =
+            build_todo_completion_continuation_message(&[strong], QUALITY_GATE_THRESHOLD);
         assert!(average_only.starts_with(TODO_COMPLETION_CONTINUATION_MESSAGE));
         assert!(average_only.contains("re-verify the finished todos"));
     }
@@ -997,7 +1003,7 @@ mod tests {
                 item
             })
             .collect();
-        let message = build_todo_completion_continuation_message(&todos);
+        let message = build_todo_completion_continuation_message(&todos, QUALITY_GATE_THRESHOLD);
         assert!(message.contains("\"task 0\""));
         assert!(!message.contains("\"task 30\""));
         assert!(message.contains(&format!("(and {} more)", 40 - GATE_NAMED_TODO_LIMIT)));
@@ -1010,7 +1016,7 @@ mod tests {
         item.confidence_history = vec![10, 50];
         let todos = [item];
         assert!(is_auto_poke_message(
-            &build_todo_completion_continuation_message(&todos)
+            &build_todo_completion_continuation_message(&todos, QUALITY_GATE_THRESHOLD)
         ));
         assert!(is_auto_poke_message(
             &build_todo_confidence_spike_continuation_message(&todos)
@@ -1027,7 +1033,7 @@ mod tests {
         let todos = [item];
 
         for message in [
-            build_todo_completion_continuation_message(&todos),
+            build_todo_completion_continuation_message(&todos, QUALITY_GATE_THRESHOLD),
             build_todo_confidence_spike_continuation_message(&todos),
             TODO_OWNERSHIP_CONTINUATION_MESSAGE.to_string(),
             TODO_INTENT_UNDERSTANDING_CONTINUATION_MESSAGE.to_string(),

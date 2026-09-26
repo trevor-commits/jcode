@@ -2659,7 +2659,10 @@ fn build_run_todo_validation_message(
     if completion_confidence_needs_validation {
         crate::telemetry::record_todo_gate(crate::telemetry::TodoGateKind::Completion);
         Some((
-            crate::todo::build_todo_completion_continuation_message(todos),
+            crate::todo::build_todo_completion_continuation_message(
+                todos,
+                RUN_TODO_CONFIDENCE_THRESHOLD,
+            ),
             false,
         ))
     } else {
