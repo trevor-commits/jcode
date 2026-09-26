@@ -1,8 +1,8 @@
 {
-  "total": 3100,
+  "total": 3102,
   "totals_by_pattern": {
-    "dot_ok": 1161,
-    "let_underscore": 1170,
+    "dot_ok": 1162,
+    "let_underscore": 1171,
     "unwrap_or_default": 769
   },
   "tracked_files": {
@@ -409,6 +409,11 @@
     "crates/jcode-app-core/src/tool/communicate/transport.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
+      "unwrap_or_default": 0
+    },
+    "crates/jcode-app-core/src/tool/computer/observe.rs": {
+      "dot_ok": 1,
+      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "crates/jcode-app-core/src/tool/computer/osa.rs": {

@@ -243,7 +243,10 @@ fn with_observability(handle: &ElementHandle, out: ToolOutput) -> ToolOutput {
     match observe::signal_background_action(&handle.app, &handle.path) {
         Some(notice) => {
             let combined = format!("{}\n{notice}", out.output);
-            ToolOutput { output: combined, ..out }
+            ToolOutput {
+                output: combined,
+                ..out
+            }
         }
         None => out,
     }
