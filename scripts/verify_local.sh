@@ -8,6 +8,9 @@
 #   scripts/verify_local.sh --with-tests    # also run scripts/test_fast.sh
 #   scripts/verify_local.sh --with-guardrails-full
 #                                         # full scripts/check_guardrails.sh (slow)
+#   scripts/verify_local.sh --survey      # print CI parity summary (no gates)
+#   scripts/verify_local.sh --with-security-preflight
+#                                         # secret/permission scan (+ audit if installed)
 #
 # Linux system deps (also required by CI quality job):
 #   sudo apt-get install -y libfontconfig1-dev
@@ -23,13 +26,17 @@ cd "$(dirname "$0")/.."
 OFFLINE=false
 WITH_TESTS=false
 FULL_GUARDRAILS=false
+SURVEY=false
+WITH_SECURITY=false
 for arg in "$@"; do
     case "$arg" in
         --offline) OFFLINE=true ;;
         --with-tests) WITH_TESTS=true ;;
         --with-guardrails-full) FULL_GUARDRAILS=true ;;
+        --survey) SURVEY=true ;;
+        --with-security-preflight) WITH_SECURITY=true ;;
         -h|--help)
-            sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -38,6 +45,21 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+if $SURVEY; then
+    parity_doc="docs/dev/LOCAL_CI_PARITY.md"
+    if [[ -f "$parity_doc" ]]; then
+        sed -n '/^## CI job matrix/,/^## Recommended workflows/p' "$parity_doc" | sed '$d'
+        echo ""
+        echo "Full doc: $parity_doc"
+        echo "Run: scripts/verify_local.sh   # pre-push default"
+        echo "Run: scripts/verify_local.sh --offline"
+    else
+        echo "error: missing $parity_doc" >&2
+        exit 1
+    fi
+    exit 0
+fi
 
 run_step() {
     local label=$1
@@ -81,6 +103,15 @@ offline_gates() {
     run_step "panic-prone usage ratchet" python3 scripts/check_panic_budget.py
     run_step "swallowed-error usage ratchet" python3 scripts/check_swallowed_error_budget.py
     run_step "wildcard re-export ratchet" python3 scripts/check_wildcard_reexport_budget.py
+    if command -v cargo >/dev/null 2>&1 && cargo metadata --format-version 1 >/dev/null 2>&1; then
+        run_step "crate dependency boundaries" python3 scripts/check_dependency_boundaries.py
+    else
+        echo "⏭  crate dependency boundaries (needs working cargo metadata)"
+    fi
+    if $WITH_SECURITY; then
+        echo ""
+        run_step "security preflight (non-strict)" bash scripts/security_preflight.sh
+    fi
     echo ""
     echo "=== Release automation (CI release-automation job) ==="
     run_step "Discord release unittest" python3 -m unittest -v scripts/test_post_discord_release.py
@@ -106,6 +137,10 @@ if $OFFLINE; then
     offline_gates
 else
     main_gates
+    if $WITH_SECURITY; then
+        echo ""
+        run_step "security preflight (non-strict)" bash scripts/security_preflight.sh
+    fi
 fi
 
 if $WITH_TESTS; then
