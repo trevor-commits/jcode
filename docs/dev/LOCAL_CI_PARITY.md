@@ -15,9 +15,11 @@ Re-run (read-only): `gh pr list --state open --draft --json number,title,headRef
 | [#16](https://github.com/trevor-commits/jcode/pull/16) | `cursor/usage-burn-verify-local-32e6` | **Closed** (superseded) | Initial `verify_local.sh`, `rust-toolchain.toml`, CONTRIBUTING links |
 | [#17](https://github.com/trevor-commits/jcode/pull/17) | `cursor/usage-burn-reliability-deeper-bbe0` | **Open draft** (canonical) | CI parity matrix, `--survey`, offline path, security preflight hook, doc cross-links |
 
-No other open draft PRs were found for this workstream at the last survey. Do **not** merge #17 until a human promotes it from draft.
+No other open draft PRs were found for this workstream at the last survey (2026-10-01, cloud agent `bc-24de3f5a-fc01-5a57-8f2c-1ba1dd7b97f6`). Do **not** merge #17 until a human promotes it from draft.
 
 **Re-survey command:** `gh pr list --state open --draft --json number,title,headRefName,updatedAt`
+
+**Agent read-only checklist (no gates):** `scripts/verify_local.sh --checklist`
 
 ## How `ci.yml` jobs relate
 
@@ -46,6 +48,25 @@ flowchart LR
 ```
 
 `scripts/verify_local.sh` approximates **quality** (with `--skip-slow`) + **release-automation** only. Everything else needs a longer local command, a specific OS, or CI.
+
+The standalone **`fmt`** job duplicates `check_module_files.py` + `cargo fmt --check` from **quality**; both must pass in CI. Local `check_guardrails.sh` / default verify only need to run fmt once.
+
+### CI reliability notes (deeper)
+
+These are the main reasons a commit can look green locally but red in CI (or the reverse), and how this workstream maps them:
+
+| Mechanism | Where | Local implication |
+|-----------|--------|-------------------|
+| **Concurrency cancel** | `ci.yml` `cancel-in-progress: true` on the same ref | A newer push on your branch cancels in-flight CI; a red run may be stale. Re-run failed jobs or wait for the latest commit. |
+| **Per-step timeouts** | `build` uses `.github/scripts/run_with_timeout.py` (600–900s per cohort) | `scripts/test_ci_suites.py` uses similar wall-clock budgets per suite; still not identical to every cohort in `build`. |
+| **`RUSTUP_TOOLCHAIN=stable`** | `build` matrix only | Pins toolchain when dependency crates ship nested `rust-toolchain.toml`. Local `cargo` without that env follows repo-root `rust-toolchain.toml` (also stable). |
+| **sccache vs plain rustc** | Windows build uses sccache; Linux `build` deliberately avoids mixing sccache with later `cargo test` steps | Rare E0514 / version-stamp mismatches are a CI concern, not `verify_local.sh`. |
+| **Silent skip vs real run** | Embedding cohort fetches MiniLM and greps logs so skips fail the job | Offline verify never fetches models; use CI or run the cohort manually when touching embeddings. |
+| **OS-specific cohorts** | TUI lib (Linux), secret_input (non-Windows), PowerShell (Windows job) | Full parity needs Linux + macOS + Windows hosts or CI. |
+| **Linked issue gate** | `require-issue.yml` on PR open/edit/sync | Draft #17 may need `Closes #N` or Development sidebar link before promotion; unrelated to `verify_local.sh`. |
+| **Private git deps** | `DEPLOY_KEY` + ssh-agent when secret is set | Contributors without the key use public checkout; if `cargo` fails fetching a private git dep, that is an environment gap, not a ratchet failure. |
+
+Job-level **timeout-minutes** caps (quality 45, build 75, windows-build-test 150, etc.) are documented in `ci.yml`; local runs are usually limited by RAM and disk before those wall clocks.
 
 ## CI job matrix
 
@@ -185,16 +206,22 @@ scripts/verify_local.sh --with-security-preflight
 
 ## Verify steps (agent / maintainer checklist)
 
+Print this block without running gates: `scripts/verify_local.sh --checklist`
+
 Read-only survey and offline gates (no `cargo` compile, no external writes):
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 gh pr list --state open --draft --json number,title,headRefName,updatedAt
 scripts/verify_local.sh --survey
+scripts/verify_local.sh --checklist
 scripts/verify_local.sh --offline
 scripts/verify_local.sh --offline --with-security-preflight   # non-strict audit skip OK
-scripts/verify_local.sh || test $? -eq 1   # expect exit 1 without libfontconfig1-dev on Linux
+# Linux without libfontconfig1-dev: default verify must exit 1 (preflight fail-fast)
+scripts/verify_local.sh; test $? -eq 1
 ```
+
+**Last offline verify (2026-10-01, `bc-24de3f5a-fc01-5a57-8f2c-1ba1dd7b97f6`):** `--survey`, `--offline`, and `--offline --with-security-preflight` exited `0`; default `verify_local.sh` exited `1` (fontconfig preflight, expected on this host).
 
 Full pre-push path on Linux (needs network for crates + fontconfig):
 

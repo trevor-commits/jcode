@@ -30,7 +30,7 @@ sudo apt-get install -y libfontconfig1-dev
 
 **Full guardrails** (format, clippy, machete, desktop2 frame budget, all ratchets): `scripts/check_guardrails.sh`. Use `--skip-slow` for a faster pass without `cargo check` / clippy / machete. See `AGENTS.md` for maintainer workflow notes.
 
-**CI parity matrix:** `docs/dev/LOCAL_CI_PARITY.md` lists every `ci.yml` job and the local equivalent. Quick summary: `scripts/verify_local.sh --survey`.
+**CI parity matrix:** `docs/dev/LOCAL_CI_PARITY.md` lists every `ci.yml` job and the local equivalent. Quick summary: `scripts/verify_local.sh --survey`. Agent offline playbook (commands only): `scripts/verify_local.sh --checklist`.
 
 **macOS-only / network-heavy checks** are not part of `verify_local.sh` (for example Windows smoke workflows, real-provider smoke scripts, memory regression gates that need a pinned local session). Run those only when you are working in those areas.
 

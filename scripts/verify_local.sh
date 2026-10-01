@@ -9,6 +9,7 @@
 #   scripts/verify_local.sh --with-guardrails-full
 #                                         # full scripts/check_guardrails.sh (slow)
 #   scripts/verify_local.sh --survey      # print CI parity summary (no gates)
+#   scripts/verify_local.sh --checklist   # print offline verify commands (no gates)
 #   scripts/verify_local.sh --with-security-preflight
 #                                         # secret/permission scan (+ audit if installed)
 #
@@ -27,6 +28,7 @@ OFFLINE=false
 WITH_TESTS=false
 FULL_GUARDRAILS=false
 SURVEY=false
+CHECKLIST=false
 WITH_SECURITY=false
 for arg in "$@"; do
     case "$arg" in
@@ -34,6 +36,7 @@ for arg in "$@"; do
         --with-tests) WITH_TESTS=true ;;
         --with-guardrails-full) FULL_GUARDRAILS=true ;;
         --survey) SURVEY=true ;;
+        --checklist) CHECKLIST=true ;;
         --with-security-preflight) WITH_SECURITY=true ;;
         -h|--help)
             sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
@@ -48,13 +51,34 @@ done
 
 print_parity_section() {
     local doc=$1 start=$2 end=$3
-    sed -n "/^## ${start}/,/^## ${end}/p" "$doc" | sed '$d'
+    awk -v start="$start" -v end="$end" '
+        index($0, "## " start) == 1 { found = 1 }
+        found {
+            if (NR > 1 && index($0, "## " end) == 1) { exit }
+            print
+        }
+    ' "$doc"
 }
+
+if $CHECKLIST; then
+    parity_doc="docs/dev/LOCAL_CI_PARITY.md"
+    if [[ -f "$parity_doc" ]]; then
+        print_parity_section "$parity_doc" "Verify steps (agent / maintainer checklist)" "Full pre-push path on Linux"
+        echo ""
+        echo "Full doc: $parity_doc"
+    else
+        echo "error: missing $parity_doc" >&2
+        exit 1
+    fi
+    exit 0
+fi
 
 if $SURVEY; then
     parity_doc="docs/dev/LOCAL_CI_PARITY.md"
     if [[ -f "$parity_doc" ]]; then
         print_parity_section "$parity_doc" "Open draft PR survey" "How \`ci.yml\` jobs relate"
+        echo ""
+        print_parity_section "$parity_doc" "CI reliability notes (deeper)" "CI job matrix"
         echo ""
         print_parity_section "$parity_doc" "CI job matrix" "Other GitHub workflows"
         echo ""
@@ -62,6 +86,7 @@ if $SURVEY; then
         echo ""
         print_parity_section "$parity_doc" "Troubleshooting" "Recommended workflows"
         echo ""
+        echo "Offline command checklist: scripts/verify_local.sh --checklist"
         echo "Full doc: $parity_doc"
         echo "Run: scripts/verify_local.sh   # pre-push default"
         echo "Run: scripts/verify_local.sh --offline"
