@@ -49,9 +49,9 @@ flowchart LR
 
 `scripts/verify_local.sh` approximates **quality** (with `--skip-slow`) + **release-automation** only. Everything else needs a longer local command, a specific OS, or CI.
 
-The standalone **`fmt`** job duplicates `check_module_files.py` + `cargo fmt --check` from **quality**; both must pass in CI. Local `check_guardrails.sh` / default verify only need to run fmt once.
+## CI reliability notes (deeper)
 
-### CI reliability notes (deeper)
+The standalone **`fmt`** job duplicates `check_module_files.py` + `cargo fmt --check` from **quality**; both must pass in CI. Local `check_guardrails.sh` / default verify only need to run fmt once.
 
 These are the main reasons a commit can look green locally but red in CI (or the reverse), and how this workstream maps them:
 
