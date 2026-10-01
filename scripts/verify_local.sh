@@ -46,14 +46,24 @@ for arg in "$@"; do
     esac
 done
 
+print_parity_section() {
+    local doc=$1 start=$2 end=$3
+    sed -n "/^## ${start}/,/^## ${end}/p" "$doc" | sed '$d'
+}
+
 if $SURVEY; then
     parity_doc="docs/dev/LOCAL_CI_PARITY.md"
     if [[ -f "$parity_doc" ]]; then
-        sed -n '/^## CI job matrix/,/^## Recommended workflows/p' "$parity_doc" | sed '$d'
+        print_parity_section "$parity_doc" "CI job matrix" "Other GitHub workflows"
+        echo ""
+        print_parity_section "$parity_doc" "Other GitHub workflows" "Troubleshooting"
+        echo ""
+        print_parity_section "$parity_doc" "Troubleshooting" "Recommended workflows"
         echo ""
         echo "Full doc: $parity_doc"
         echo "Run: scripts/verify_local.sh   # pre-push default"
         echo "Run: scripts/verify_local.sh --offline"
+        echo "Re-survey open draft PRs: gh pr list --state open --draft"
     else
         echo "error: missing $parity_doc" >&2
         exit 1
@@ -90,7 +100,13 @@ EOF
     fi
     if [[ "$(uname -s)" == "Linux" ]] && command -v pkg-config >/dev/null 2>&1; then
         if ! pkg-config --exists fontconfig 2>/dev/null; then
-            echo "warning: fontconfig.pc not found; desktop2 / all-features builds will fail until you install libfontconfig1-dev (Linux)" >&2
+            cat >&2 <<'EOF'
+error: fontconfig.pc not found. Default verify runs the desktop2 frame-budget test
+(even with guardrails --skip-slow), which needs fontconfig headers — same as CI:
+  sudo apt-get install -y libfontconfig1-dev
+Use scripts/verify_local.sh --offline if you cannot install system deps yet.
+EOF
+            exit 1
         fi
     fi
 }

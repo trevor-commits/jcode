@@ -8,12 +8,14 @@ This doc maps `.github/workflows/ci.yml` jobs to local commands. It is the refer
 
 ## Open draft PR survey (usage-burn reliability)
 
-As of the deeper pass, the only open **draft** PR on `trevor-commits/jcode` for this work should be the successor to [#16](https://github.com/trevor-commits/jcode/pull/16) (`cursor/usage-burn-reliability-deeper-bbe0`). Earlier draft `cursor/usage-burn-verify-local-32e6` is superseded by that branch.
+Re-run (read-only): `gh pr list --state open --draft --json number,title,headRefName,state`
 
-| PR / branch | Status | Scope |
-|-------------|--------|--------|
-| #16 `cursor/usage-burn-verify-local-32e6` | Superseded | Initial `verify_local.sh`, `rust-toolchain.toml`, CONTRIBUTING links |
-| Deeper draft `cursor/usage-burn-reliability-deeper-bbe0` | Active draft | CI parity matrix, `--survey`, offline security scan, doc cross-links |
+| PR | Branch | State | Scope |
+|----|--------|-------|--------|
+| [#16](https://github.com/trevor-commits/jcode/pull/16) | `cursor/usage-burn-verify-local-32e6` | **Closed** (superseded) | Initial `verify_local.sh`, `rust-toolchain.toml`, CONTRIBUTING links |
+| [#17](https://github.com/trevor-commits/jcode/pull/17) | `cursor/usage-burn-reliability-deeper-bbe0` | **Open draft** (canonical) | CI parity matrix, `--survey`, offline path, security preflight hook, doc cross-links |
+
+No other open draft PRs were found for this workstream at the last survey. Do **not** merge #17 until a human promotes it from draft.
 
 ## CI job matrix
 
@@ -51,6 +53,41 @@ As of the deeper pass, the only open **draft** PR on `trevor-commits/jcode` for 
 
 **Linux deps:** `sudo apt-get install -y libfontconfig1-dev` (required for desktop2 / all-features compile).
 
+## Other GitHub workflows
+
+These run outside the main `ci.yml` PR path. None are invoked by `verify_local.sh`.
+
+| Workflow file | Name | Trigger | Local analogue |
+|---------------|------|---------|----------------|
+| `ci.yml` | CI | push/PR to `master` | `verify_local.sh`, `check_guardrails.sh`, `test_ci_suites.py` |
+| `require-issue.yml` | Require Linked Issue | PR open/edit/sync | Link a real issue in the PR body (`Closes #N` or Development sidebar) |
+| `release.yml` | Release | tags / manual | Maintainer-only; uses signing and publish secrets |
+| `discord-release.yml` | Announce release on Discord | release published | `scripts/post_discord_release.py` (unittest covered in verify) |
+| `windows-smoke.yml` | Windows Smoke | `workflow_dispatch` | Windows host; overlaps partially with `ci.yml` `windows-build-test` |
+| `freebsd-smoke.yml` | FreeBSD Smoke | schedule / dispatch | FreeBSD VM or wait for workflow |
+| `ios-testflight.yml` | iOS TestFlight | manual / release | macOS + Apple credentials |
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `edition2024` / feature errors from `cargo` | Rust stable too old | `rustup update stable` (repo pins `stable` in `rust-toolchain.toml`) |
+| `fontconfig.pc` / `yeslogic-fontconfig-sys` build panic | Missing Linux headers | `sudo apt-get install -y libfontconfig1-dev` |
+| `cargo metadata` failed in preflight | Same as above, or no network for first fetch | Install deps; ensure network for non-`--offline` runs |
+| Default verify fails after ~2 min on desktop2 gate | fontconfig missing (warning used to be easy to miss) | Install fontconfig dev package; `verify_local.sh` now fails fast in preflight |
+| Clippy passes locally, fails in CI | Stale `stable` vs CI's current stable | `rustup update stable` before `check_guardrails.sh` without `--skip-slow` |
+| `cargo machete` skipped locally | Not installed | `cargo install cargo-machete --locked` (CI always installs) |
+| Security preflight warns on audit | `cargo-audit` optional unless `--strict` | Install for parity; CI build job uses `--strict` |
+| Windows-only red CI | Cannot reproduce on Linux | Use Windows runner or `windows-smoke` dispatch |
+
+### Exit codes (`verify_local.sh`)
+
+| Code | Meaning |
+|------|---------|
+| `0` | All requested gates passed |
+| `1` | A gate failed (see output above the summary) |
+| `2` | Unknown CLI flag |
+
 ## Recommended workflows
 
 ```bash
@@ -84,16 +121,27 @@ scripts/verify_local.sh --with-security-preflight
 
 ## Verify steps (agent / maintainer checklist)
 
-Run on Linux with network for `cargo fetch` unless using `--offline` only:
+Read-only survey and offline gates (no `cargo` compile, no external writes):
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
+gh pr list --state open --draft --json number,title,headRefName
 scripts/verify_local.sh --survey
 scripts/verify_local.sh --offline
-# optional: sudo apt-get install -y libfontconfig1-dev
-rustup update stable
-scripts/verify_local.sh
-scripts/check_guardrails.sh --skip-slow   # should match verify default gates
+scripts/verify_local.sh --offline --with-security-preflight   # non-strict audit skip OK
 ```
 
-Do not commit secrets; `security_preflight` scans tracked files for common patterns.
+Full pre-push path on Linux (needs network for crates + fontconfig):
+
+```bash
+sudo apt-get install -y libfontconfig1-dev
+rustup update stable
+scripts/verify_local.sh
+# equivalent gates:
+scripts/check_guardrails.sh --skip-slow
+python3 -m unittest -v scripts/test_post_discord_release.py
+```
+
+**Not required for this draft:** `check_guardrails.sh` without `--skip-slow`, `test_ci_suites.py`, Windows jobs, `security_preflight.sh --strict`, or merging the PR.
+
+Do not commit secrets; `security_preflight` scans tracked files for common patterns only.
