@@ -3,7 +3,13 @@ name: CI
 on:
   push:
     branches: [main, master]
+    paths-ignore:
+      - '**.md'
+
   pull_request:
+      paths-ignore:
+            - '**.md'
+            
     branches: [main, master]
 
 concurrency:
@@ -129,7 +135,9 @@ jobs:
           cargo install cargo-machete --locked
           cargo machete
 
-  release-automation:
+  release-automation:    runs-on: ${{ matrix.os }}
+
+    if: matrix.os == 'ubuntu-latest' || github.event_name == 'push'
     name: Release Automation
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -164,7 +172,7 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-latest]
         include:
@@ -416,6 +424,7 @@ jobs:
 
   windows-build-test:
     name: Build & Test (windows-latest)
+        if: github.event_name == 'push'
     runs-on: windows-latest
     timeout-minutes: 150
     steps:
