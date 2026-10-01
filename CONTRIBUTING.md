@@ -2,6 +2,36 @@
 
 Thanks for contributing.
 
+## Local verification
+
+Before you push, run the same lightweight gates CI enforces on every PR:
+
+```bash
+# Pre-push default (~minutes, no provider keys; needs current stable Rust)
+scripts/verify_local.sh
+
+# Fully offline (Python ratchets + release-automation unittest only)
+scripts/verify_local.sh --offline
+
+# Inner-loop Rust tests (minimal feature profile)
+scripts/test_fast.sh
+
+# CI-shaped test suites with per-suite timeouts
+python3 scripts/test_ci_suites.py
+```
+
+**Toolchain:** the workspace uses Rust edition 2024. `rust-toolchain.toml` pins the `stable` channel (with clippy and rustfmt). Run `rustup update stable` if `cargo` complains about `edition2024`.
+
+**Linux deps:** `scripts/check_guardrails.sh` and full `cargo check --all-features` need fontconfig development headers, same as CI:
+
+```bash
+sudo apt-get install -y libfontconfig1-dev
+```
+
+**Full guardrails** (format, clippy, machete, desktop2 frame budget, all ratchets): `scripts/check_guardrails.sh`. Use `--skip-slow` for a faster pass without `cargo check` / clippy / machete. See `AGENTS.md` for maintainer workflow notes.
+
+**macOS-only / network-heavy checks** are not part of `verify_local.sh` (for example Windows smoke workflows, real-provider smoke scripts, memory regression gates that need a pinned local session). Run those only when you are working in those areas.
+
 ## Issues vs pull requests
 
 If the problem is easy for me to reproduce, please prefer opening a GitHub issue. A clear issue with reproduction steps, expected behavior, actual behavior, logs, screenshots, or traces is usually the fastest path to a fix.

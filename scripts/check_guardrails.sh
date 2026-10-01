@@ -14,6 +14,11 @@
 # Note: CI tracks the `stable` toolchain. If your local stable is behind, clippy
 # can pass here and fail in CI on a newly added lint, so this warns when the two
 # are likely to disagree. Run `rustup update stable` to align them.
+#
+# Linux: the desktop2 frame-budget gate needs fontconfig headers (CI installs
+# libfontconfig1-dev). On Debian/Ubuntu: sudo apt-get install -y libfontconfig1-dev
+#
+# Quick pre-push path: scripts/verify_local.sh (see CONTRIBUTING.md).
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -80,7 +85,8 @@ fi
 
 # Only the Windows CI jobs pass --locked, so a stale lockfile otherwise passes
 # 8 of 9 jobs and fails Windows at "Build release binary".
-run_gate "Cargo.lock is up to date" cargo metadata --locked --format-version 1
+run_gate "Cargo.lock is up to date" bash -c \
+    'cargo metadata --locked --format-version 1 >/dev/null'
 run_gate "warning budget" bash scripts/check_warning_budget.sh
 run_ratchet "oversized-file ratchet" check_code_size_budget.py
 run_ratchet "oversized-test ratchet" check_test_size_budget.py

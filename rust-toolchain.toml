@@ -1,0 +1,6 @@
+# jcode uses Rust edition 2024. Pin the repo to the same `stable` channel CI uses
+# (see .github/workflows/ci.yml). Without this, an older default toolchain fails
+# cargo with "feature `edition2024` is required" before any test or guardrail runs.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]
