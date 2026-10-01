@@ -17,6 +17,36 @@ Re-run (read-only): `gh pr list --state open --draft --json number,title,headRef
 
 No other open draft PRs were found for this workstream at the last survey. Do **not** merge #17 until a human promotes it from draft.
 
+**Re-survey command:** `gh pr list --state open --draft --json number,title,headRefName,updatedAt`
+
+## How `ci.yml` jobs relate
+
+On every push/PR to `master`, GitHub runs these jobs **in parallel** (concurrency group `ci-${{ github.workflow }}-${{ github.ref }}` cancels superseded runs on the same ref):
+
+```mermaid
+flowchart LR
+  subgraph ci_yml [ci.yml parallel jobs]
+    Q[quality]
+    RA[release-automation]
+    FMT[fmt]
+    B[build ubuntu + macos]
+    W[windows-build-test]
+    PS[powershell-syntax]
+    SF[setup-friction]
+    WX[windows-cross-check]
+  end
+  Q --> merge[all must pass for green CI]
+  RA --> merge
+  FMT --> merge
+  B --> merge
+  W --> merge
+  PS --> merge
+  SF --> merge
+  WX --> merge
+```
+
+`scripts/verify_local.sh` approximates **quality** (with `--skip-slow`) + **release-automation** only. Everything else needs a longer local command, a specific OS, or CI.
+
 ## CI job matrix
 
 | CI job | Runner | Covered locally | Local command |
@@ -31,6 +61,38 @@ No other open draft PRs were found for this workstream at the last survey. Do **
 | **powershell-syntax** | `windows-latest` | No (on Linux) | `./scripts/check_powershell_syntax.ps1` on Windows |
 | **setup-friction** | `ubuntu-latest` | Manual | `bash scripts/test_install_conversion.sh`, `bash scripts/setup_friction_eval.sh` |
 | **windows-cross-check** | `ubuntu-latest` | Manual | See job in `ci.yml` (cross-target `cargo check`) |
+
+### Build & Test: named cohorts vs `test_ci_suites.py`
+
+The `build` matrix job runs many **targeted** `cargo test` cohorts before the three suites wrapped by `scripts/test_ci_suites.py`. The Python runner mirrors the heavy integration slice (`lib-bins`, `provider-matrix`, `e2e`) but **does not** replace the smaller cohort steps below.
+
+| CI step (build job) | Platforms | In `test_ci_suites.py`? | Local when needed |
+|---------------------|-----------|---------------------------|-------------------|
+| Compile lib/bin tests (`--no-run`) | all | Partial (`lib-bins` compiles + runs) | `python3 scripts/test_ci_suites.py lib-bins` |
+| `retention_readiness` cohort | all | No | `cargo test -p jcode-app-core --lib retention_readiness` |
+| `secret_input` pty cohort | non-Windows | No | `cargo test -p jcode-base --lib secret_input` |
+| MiniLM embedding stability | Linux only | No | Fetch model per `ci.yml` step, then `cargo test -p jcode-embedding --lib` |
+| stdin-forwarding cohort | all | No | `cargo test -p jcode-app-core --lib tool::bash::tests::test_stdin_forwarding` |
+| TUI lib tests (serial) | Linux only | No | `COLORTERM=truecolor cargo test -p jcode-tui --lib --test-threads=1` (+ skips in CI) |
+| `provider_matrix` / `e2e` | all | Yes | `python3 scripts/test_ci_suites.py provider-matrix e2e` |
+| Warning budget | Linux | No (needs `cargo check`) | `scripts/check_warning_budget.sh` (in full guardrails) |
+| Security preflight `--strict` | Linux | Optional flag | `scripts/verify_local.sh --with-security-preflight` (non-strict) or install `cargo-audit` + `--strict` |
+
+### Offline ratchet inventory (`verify_local.sh --offline`)
+
+These gates run **without** invoking `cargo check` / clippy (dependency boundaries still need working `cargo metadata`):
+
+| Gate | Script |
+|------|--------|
+| Module declarations | `scripts/check_module_files.py` |
+| Code size | `scripts/check_code_size_budget.py` |
+| Test size | `scripts/check_test_size_budget.py` |
+| Panic-prone patterns | `scripts/check_panic_budget.py` |
+| Swallowed errors | `scripts/check_swallowed_error_budget.py` |
+| Wildcard re-exports | `scripts/check_wildcard_reexport_budget.py` |
+| Crate dependency boundaries | `scripts/check_dependency_boundaries.py` (skipped if metadata unavailable) |
+
+Intentionally **not** in `--offline`: `check_warning_budget.sh` (compiles), `cargo fmt`, desktop2 frame budget, machete, integration tests.
 
 ### Quality Guardrails step-by-step
 
@@ -79,6 +141,8 @@ These run outside the main `ci.yml` PR path. None are invoked by `verify_local.s
 | `cargo machete` skipped locally | Not installed | `cargo install cargo-machete --locked` (CI always installs) |
 | Security preflight warns on audit | `cargo-audit` optional unless `--strict` | Install for parity; CI build job uses `--strict` |
 | Windows-only red CI | Cannot reproduce on Linux | Use Windows runner or `windows-smoke` dispatch |
+| OOM / build killed mid-guardrails | Low RAM on cloud agent or laptop | Lower `CARGO_BUILD_JOBS`, use `scripts/remote_build.sh`, or `--skip-slow` while iterating |
+| `dependency boundaries` skipped offline | `cargo metadata` failed | Fix toolchain/deps; offline path still runs other ratchets |
 
 ### Exit codes (`verify_local.sh`)
 
@@ -125,10 +189,11 @@ Read-only survey and offline gates (no `cargo` compile, no external writes):
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-gh pr list --state open --draft --json number,title,headRefName
+gh pr list --state open --draft --json number,title,headRefName,updatedAt
 scripts/verify_local.sh --survey
 scripts/verify_local.sh --offline
 scripts/verify_local.sh --offline --with-security-preflight   # non-strict audit skip OK
+scripts/verify_local.sh || test $? -eq 1   # expect exit 1 without libfontconfig1-dev on Linux
 ```
 
 Full pre-push path on Linux (needs network for crates + fontconfig):

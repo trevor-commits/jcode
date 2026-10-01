@@ -54,6 +54,8 @@ print_parity_section() {
 if $SURVEY; then
     parity_doc="docs/dev/LOCAL_CI_PARITY.md"
     if [[ -f "$parity_doc" ]]; then
+        print_parity_section "$parity_doc" "Open draft PR survey" "How \`ci.yml\` jobs relate"
+        echo ""
         print_parity_section "$parity_doc" "CI job matrix" "Other GitHub workflows"
         echo ""
         print_parity_section "$parity_doc" "Other GitHub workflows" "Troubleshooting"
